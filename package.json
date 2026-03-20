@@ -1,6 +1,6 @@
 {
   "name": "finuslugabot",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Basic Telegram bot scaffold for FinUsluga",
   "main": "src/bot.js",
   "scripts": {
