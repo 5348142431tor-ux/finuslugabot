@@ -1,6 +1,6 @@
 # FinuslugaBot
 
-Базовый Telegram-бот на Node.js с использованием [Telegraf](https://telegraf.js.org/).
+Базовый Telegram-бот на Node.js с использованием [Telegraf](https://telegraf.js.org/). Он уже умеет приветствовать пользователей (/start), выдавать подсказку (/help), отвечать на /ping и повторять текстовые сообщения (эхо).
 
 ## Быстрый старт
 
