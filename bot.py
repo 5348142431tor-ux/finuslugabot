@@ -564,7 +564,9 @@ class MathBot:
         if not raw_text:
             return
         if re.search(r"\d", raw_text) and not raw_text.startswith("/"):
-            await message.reply_text("Чтобы записать сумму или выражение, начни сообщение со слеша: /3000 usdt")
+            chat = update.effective_chat
+            if chat.type == ChatType.PRIVATE:
+                await self._route_to_support(update, context, raw_text)
             return
         if raw_text.startswith("/"):
             return
