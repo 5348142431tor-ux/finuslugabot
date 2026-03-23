@@ -854,7 +854,11 @@ class MathBot:
             return
         await query.answer()
         if query.data == "menu_kurs":
-            fake_update = SimpleNamespace(effective_chat=query.message.chat, message=query.message)
+            fake_update = SimpleNamespace(
+                effective_chat=query.message.chat,
+                effective_message=query.message,
+                message=query.message,
+            )
             await self.send_rates(fake_update, context)
 
     async def send_wallet(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
