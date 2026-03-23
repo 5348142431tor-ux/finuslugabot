@@ -16,6 +16,7 @@ import certifi
 import easyocr
 import gspread
 import requests
+from types import SimpleNamespace
 
 os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 from gspread.utils import rowcol_to_a1
