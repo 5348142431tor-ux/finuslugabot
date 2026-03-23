@@ -271,15 +271,11 @@ class SheetRepository:
             if chat_id in self.chat_row_cache:
                 return
             base_payload = [chat_id, chat_name, user_name, "", "0", ""]
-            self.sheet.append_row(
-                base_payload,
-                value_input_option="USER_ENTERED",
-                insert_data_option="INSERT_ROWS",
-                table_range="A1:F1"
-            )
             col_values = self.sheet.col_values(1)
-            row_idx = len(col_values)
-            self.chat_row_cache[chat_id] = row_idx
+            next_row = len(col_values) + 1
+            range_name = f"A{next_row}:F{next_row}"
+            self.sheet.update(range_name=range_name, values=[base_payload])
+            self.chat_row_cache[chat_id] = next_row
 
     async def get_total(self, chat_id: str) -> Decimal:
         async with self.lock:
