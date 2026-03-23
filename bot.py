@@ -270,20 +270,12 @@ class SheetRepository:
         async with self.lock:
             if chat_id in self.chat_row_cache:
                 return
-            num_cols = max(len(self.header_titles), self.sheet.col_count)
-            row_payload = ["" for _ in range(num_cols)]
-            for idx, title in enumerate(self.header_titles, start=1):
-                if title == "chat_id":
-                    row_payload[idx - 1] = chat_id
-                elif title == "chat_name":
-                    row_payload[idx - 1] = chat_name
-                elif title == "user":
-                    row_payload[idx - 1] = user_name
-                elif title == "expression":
-                    row_payload[idx - 1] = ""
-                elif title == "result":
-                    row_payload[idx - 1] = "0"
-            self.sheet.append_row(row_payload, value_input_option="USER_ENTERED")
+            base_payload = [chat_id, chat_name, user_name, "", "0", ""]
+            self.sheet.append_row(
+                base_payload,
+                value_input_option="USER_ENTERED",
+                insert_data_option="INSERT_ROWS"
+            )
             col_values = self.sheet.col_values(1)
             row_idx = len(col_values)
             self.chat_row_cache[chat_id] = row_idx
