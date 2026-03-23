@@ -307,6 +307,16 @@ class SheetRepository:
                 self.sheet.batch_update(zero_updates)
             self.chat_row_cache[chat_id] = next_row
 
+    async def get_chat_name(self, chat_id: str) -> str | None:
+        async with self.lock:
+            row_idx = self.chat_row_cache.get(chat_id)
+            if not row_idx:
+                return None
+            col_idx = self.column_map.get("chat_name")
+            if not col_idx:
+                return None
+            return await self._get_cell_value(row_idx, col_idx)
+
     async def get_total(self, chat_id: str) -> Decimal:
         async with self.lock:
             row_idx = self.chat_row_cache.get(chat_id)
@@ -737,9 +747,24 @@ class MathBot:
             return
         await context.bot.send_message(chat_id=user_id, text=text_body)
 
-    async def send_total(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
+    async def send_total(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat = update.effective_chat
-        totals = await self.repo.get_currency_totals(str(chat.id))
+        message = update.message
+        target_chat_id = str(chat.id)
+        prefix = "Остатки:"
+        if (
+            self.support_chat_id
+            and chat.id == self.support_chat_id
+            and message
+            and message.message_thread_id
+        ):
+            user_id = self._find_user_by_thread(message.message_thread_id)
+            if user_id:
+                target_chat_id = str(user_id)
+                chat_name = await self.repo.get_chat_name(target_chat_id)
+                label = chat_name or user_id
+                prefix = f"Остатки для {label}:"
+        totals = await self.repo.get_currency_totals(target_chat_id)
         lines: list[str] = []
         for code in SUPPORTED_CURRENCY_ORDER:
             value = totals.get(code, Decimal('0'))
@@ -747,9 +772,11 @@ class MathBot:
                 continue
             lines.append(f"- {code}: {_format_decimal(value)}")
         if not lines:
-            await update.message.reply_text("Остатки: все валюты = 0")
+            await update.message.reply_text(f"{prefix} все валюты = 0")
             return
-        await update.message.reply_text("Остатки:\n" + "\n".join(lines))
+        await update.message.reply_text(prefix + "
+" + "
+".join(lines))
 
     async def send_rates(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
         chat = update.effective_chat
