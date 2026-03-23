@@ -557,7 +557,33 @@ class MathBot:
         raw_text = (message.text or "").strip()
         if not raw_text:
             return
+        if re.search(r"\d", raw_text) and not raw_text.startswith("/"):
+            await message.reply_text("Чтобы записать сумму или выражение, начни сообщение со слеша: /3000 usdt")
+            return
         if raw_text.startswith("/"):
+            return
+        await self._process_expression(update, context, raw_text)
+
+    async def handle_slash_expression(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        message = update.message
+        if not message:
+            return
+        text = (message.text or "").strip()
+        if not text.startswith("/"):
+            return
+        command_token = text.split()[0].lower()
+        base_token = command_token.split('@')[0]
+        known = {"/start", "/help", "/summa", "/total", "/kurs", "/курс", "/сумма"}
+        if base_token in known:
+            return
+        sanitized = text[1:].strip()
+        if not sanitized:
+            return
+        await self._process_expression(update, context, sanitized)
+
+    async def _process_expression(self, update: Update, context: ContextTypes.DEFAULT_TYPE, raw_text: str):
+        message = update.message or update.effective_message
+        if not message:
             return
         chat = update.effective_chat
         user = message.from_user
@@ -733,6 +759,7 @@ class MathBot:
         app.add_handler(MessageHandler(filters.Regex(r"^/сумма(?:@[\w_]+)?\b"), self.send_total))
         app.add_handler(CommandHandler(["kurs"], self.send_rates))
         app.add_handler(MessageHandler(filters.Regex(r"^/курс(?:@[\w_]+)?\b"), self.send_rates))
+        app.add_handler(MessageHandler(filters.COMMAND, self.handle_slash_expression))
         if self.support_chat_id:
             app.add_handler(MessageHandler(filters.Chat(self.support_chat_id) & filters.TEXT, self.handle_support_reply))
         app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, self.handle_receipt))
