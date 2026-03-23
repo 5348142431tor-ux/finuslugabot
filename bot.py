@@ -24,6 +24,7 @@ from telegram import Update
 from telegram.constants import ChatType
 from telegram.ext import (
     ApplicationBuilder,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -842,6 +843,19 @@ class MathBot:
             return
         await update.message.reply_text(prefix + "\n" + "\n".join(lines))
 
+    async def send_menu(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
+        keyboard = [[InlineKeyboardButton("курс", callback_data="menu_kurs")]]
+        await update.message.reply_text("Меню:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def handle_menu_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        if not query:
+            return
+        await query.answer()
+        if query.data == "menu_kurs":
+            fake_update = SimpleNamespace(effective_chat=query.message.chat, message=query.message)
+            await self.send_rates(fake_update, context)
+
     async def send_wallet(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
         value, note = await self.repo.get_setting("wallet")
         if not value:
@@ -869,6 +883,8 @@ class MathBot:
         app.add_handler(MessageHandler(filters.Regex(r"^/курс(?:@[\w_]+)?\b"), self.send_rates))
         app.add_handler(CommandHandler(["kosh"], self.send_wallet))
         app.add_handler(MessageHandler(filters.Regex(r"^/кош(?:@[\w_]+)?\b"), self.send_wallet))
+        app.add_handler(CommandHandler(["menu"], self.send_menu))
+        app.add_handler(CallbackQueryHandler(self.handle_menu_callback, pattern=r"^menu_"))
         app.add_handler(MessageHandler(filters.COMMAND, self.handle_slash_expression))
         if self.support_chat_id:
             app.add_handler(MessageHandler(filters.Chat(self.support_chat_id) & filters.TEXT, self.handle_support_reply))
