@@ -534,7 +534,7 @@ class MathBot:
         user = update.effective_user
         await self.repo.ensure_row(str(chat.id), chat.title or chat.username or str(chat.id), user.full_name or user.username or str(user.id))
         await update.message.reply_text(
-            "Привет! Я FinUsluga Bot: пришли сумму или выражение с валютой (USD/USDT/RUB/EUR/TRY) — запишу в таблицу. Вопросы тоже пиши сюда."
+            "Добрый день. Чем могу помочь?"
         )
 
     async def handle_expression(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
