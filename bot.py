@@ -274,7 +274,8 @@ class SheetRepository:
             self.sheet.append_row(
                 base_payload,
                 value_input_option="USER_ENTERED",
-                insert_data_option="INSERT_ROWS"
+                insert_data_option="INSERT_ROWS",
+                table_range="A1:F1"
             )
             col_values = self.sheet.col_values(1)
             row_idx = len(col_values)
