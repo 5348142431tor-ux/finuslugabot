@@ -330,7 +330,11 @@ class SheetRepository:
                 if not row or not row[0]:
                     continue
                 if row[0].strip().lower() == lookup:
-                    return (row[1].strip() if len(row) > 1 else "") or None
+                    value = row[1].strip() if len(row) > 1 else ""
+                    note = row[2].strip() if len(row) > 2 else ""
+                    if value and note:
+                        return f"{value} ({note})"
+                    return value or (note or None)
             return None
 
     async def get_chat_name(self, chat_id: str) -> str | None:
