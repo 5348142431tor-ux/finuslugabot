@@ -253,10 +253,16 @@ class SheetRepository:
                 cell_value = await self._get_cell_value(row_idx, currency_col)
                 current_total = _to_decimal(cell_value)
                 new_total = current_total + row.delta
+                chat_name_col = self.column_map.get("chat_name")
+                if chat_name_col:
+                    existing_chat_name = await self._get_cell_value(row_idx, chat_name_col)
+                else:
+                    existing_chat_name = None
+                chat_name_value = existing_chat_name or row.chat_name
                 updates = [
                     {
                         "range": f"A{row_idx}:D{row_idx}",
-                        "values": [[row.chat_id, row.chat_name, row.user, row.expression]],
+                        "values": [[row.chat_id, chat_name_value, row.user, row.expression]],
                     },
                     {
                         "range": rowcol_to_a1(row_idx, self.timestamp_column),
