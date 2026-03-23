@@ -20,7 +20,7 @@ import requests
 os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 from gspread.utils import rowcol_to_a1
 from google.oauth2.service_account import Credentials
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType
 from telegram.ext import (
     ApplicationBuilder,
