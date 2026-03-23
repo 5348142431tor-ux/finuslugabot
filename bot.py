@@ -321,7 +321,7 @@ class SheetRepository:
         self.settings_sheet = ws
         return ws
 
-    async def get_setting(self, key: str) -> str | None:
+    async def get_setting(self, key: str) -> tuple[str | None, str | None]:
         async with self.lock:
             sheet = self._get_settings_sheet()
             rows = sheet.get_all_values()
@@ -332,10 +332,8 @@ class SheetRepository:
                 if row[0].strip().lower() == lookup:
                     value = row[1].strip() if len(row) > 1 else ""
                     note = row[2].strip() if len(row) > 2 else ""
-                    if value and note:
-                        return f"{value} ({note})"
-                    return value or (note or None)
-            return None
+                    return (value or None, note or None)
+            return (None, None)
 
     async def get_chat_name(self, chat_id: str) -> str | None:
         async with self.lock:
@@ -845,11 +843,13 @@ class MathBot:
         await update.message.reply_text(prefix + "\n" + "\n".join(lines))
 
     async def send_wallet(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
-        value = await self.repo.get_setting("wallet")
+        value, note = await self.repo.get_setting("wallet")
         if not value:
             await update.message.reply_text("Кошелёк не задан на листе 'Настройка'.")
             return
         await update.message.reply_text(f"Кошелёк: {value}")
+        if note:
+            await update.message.reply_text(f"Сеть: {note}")
 
     async def send_rates(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
         chat = update.effective_chat
