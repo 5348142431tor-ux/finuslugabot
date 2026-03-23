@@ -1,0 +1,7 @@
+python-telegram-bot==21.4
+gspread==6.0.2
+google-auth==2.29.0
+numpy<2
+easyocr==1.7.1
+opencv-python-headless==4.9.0.80
+pillow==10.2.0

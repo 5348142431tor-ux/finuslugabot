@@ -1,3 +1,9 @@
 node_modules
 .env
 .DS_Store
+__pycache__
+*.pyc
+creds/service-account.json
+support_topics.json
+receipts/*
+!receipts/.gitkeep
