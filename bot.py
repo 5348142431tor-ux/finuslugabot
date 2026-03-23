@@ -888,9 +888,7 @@ class MathBot:
             await message.reply_text("Для этого чата нет столбцов с курсом (rate).")
             return
         lines = [f"- {title}: {value}" for title, value in entries]
-        await message.reply_text(prefix + "
-" + "
-".join(lines))
+        await message.reply_text(prefix + "\n" + "\n".join(lines))
 
 
     def run(self):
