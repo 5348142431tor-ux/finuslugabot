@@ -196,6 +196,26 @@ class SheetRepository:
             if not value or value == "chat_id":
                 continue
             self.chat_row_cache[value] = idx
+        self._repair_chat_ids()
+
+    def _repair_chat_ids(self) -> None:
+        try:
+            all_rows = self.sheet.get_all_values()
+        except Exception:
+            return
+        updates = []
+        for offset, row in enumerate(all_rows[1:], start=2):
+            chat_id_value = row[0].strip() if len(row) > 0 else ""
+            if chat_id_value:
+                continue
+            candidate = row[8].strip() if len(row) > 8 else ""
+            if not candidate:
+                continue
+            updates.append({"range": f"A{offset}", "values": [[candidate]]})
+            updates.append({"range": f"I{offset}", "values": [[""]]})
+            self.chat_row_cache[candidate] = offset
+        if updates:
+            self.sheet.batch_update(updates)
 
     def _ensure_currency_column(self, currency: str | None) -> int:
         if currency is None:
@@ -272,6 +292,13 @@ class SheetRepository:
             next_row = len(col_values) + 1
             range_name = f"A{next_row}:F{next_row}"
             self.sheet.update(range_name=range_name, values=[base_payload])
+            zero_updates = []
+            for curr, col_idx in self.currency_columns.items():
+                if col_idx == self.result_column:
+                    continue
+                zero_updates.append({"range": rowcol_to_a1(next_row, col_idx), "values": [["0"]]})
+            if zero_updates:
+                self.sheet.batch_update(zero_updates)
             self.chat_row_cache[chat_id] = next_row
 
     async def get_total(self, chat_id: str) -> Decimal:
