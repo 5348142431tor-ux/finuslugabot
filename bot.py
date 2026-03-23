@@ -192,6 +192,8 @@ class SheetRepository:
                 self._ensure_currency_column(currency_code)
 
         self.chat_row_cache: dict[str, int] = {}
+        self.settings_title = os.environ.get("SETTINGS_WORKSHEET", "Настройка")
+        self.settings_sheet = None
         for idx, value in enumerate(self.sheet.col_values(1), start=1):
             if not value or value == "chat_id":
                 continue
@@ -306,6 +308,30 @@ class SheetRepository:
             if zero_updates:
                 self.sheet.batch_update(zero_updates)
             self.chat_row_cache[chat_id] = next_row
+
+    def _get_settings_sheet(self):
+        if self.settings_sheet is not None:
+            return self.settings_sheet
+        spreadsheet = self.sheet.spreadsheet
+        try:
+            ws = spreadsheet.worksheet(self.settings_title)
+        except gspread.WorksheetNotFound:
+            ws = spreadsheet.add_worksheet(title=self.settings_title, rows=50, cols=2)
+            ws.update("A1:B1", [["key", "value"]])
+        self.settings_sheet = ws
+        return ws
+
+    async def get_setting(self, key: str) -> str | None:
+        async with self.lock:
+            sheet = self._get_settings_sheet()
+            rows = sheet.get_all_values()
+            lookup = key.strip().lower()
+            for row in rows[1:]:
+                if not row or not row[0]:
+                    continue
+                if row[0].strip().lower() == lookup:
+                    return (row[1].strip() if len(row) > 1 else "") or None
+            return None
 
     async def get_chat_name(self, chat_id: str) -> str | None:
         async with self.lock:
@@ -813,6 +839,13 @@ class MathBot:
             return
         await update.message.reply_text(prefix + "\n" + "\n".join(lines))
 
+    async def send_wallet(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
+        value = await self.repo.get_setting("wallet")
+        if not value:
+            await update.message.reply_text("Кошелёк не задан на листе 'Настройка'.")
+            return
+        await update.message.reply_text(f"Кошелёк: {value}")
+
     async def send_rates(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
         chat = update.effective_chat
         entries = await self.repo.get_rate_values(str(chat.id))
@@ -829,6 +862,7 @@ class MathBot:
         app.add_handler(MessageHandler(filters.Regex(r"^/сумма(?:@[\w_]+)?\b"), self.send_total))
         app.add_handler(CommandHandler(["kurs"], self.send_rates))
         app.add_handler(MessageHandler(filters.Regex(r"^/курс(?:@[\w_]+)?\b"), self.send_rates))
+        app.add_handler(CommandHandler(["kosh", "кош"], self.send_wallet))
         app.add_handler(MessageHandler(filters.COMMAND, self.handle_slash_expression))
         if self.support_chat_id:
             app.add_handler(MessageHandler(filters.Chat(self.support_chat_id) & filters.TEXT, self.handle_support_reply))
