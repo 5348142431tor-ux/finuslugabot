@@ -597,25 +597,62 @@ class MathBot:
         sanitized = text[1:].strip()
         if not sanitized:
             return
-        await self._process_expression(update, context, sanitized)
+        forced_chat_id = None
+        forced_chat_name = None
+        force_process = False
+        if (
+            self.support_chat_id
+            and message.chat_id == self.support_chat_id
+            and message.message_thread_id
+        ):
+            user_id = self._find_user_by_thread(message.message_thread_id)
+            if not user_id:
+                await message.reply_text("Не нашёл, к какому клиенту относится эта тема.")
+                return
+            forced_chat_id = str(user_id)
+            forced_chat_name = await self.repo.get_chat_name(forced_chat_id)
+            force_process = True
+        await self._process_expression(
+            update,
+            context,
+            sanitized,
+            forced_chat_id=forced_chat_id,
+            forced_chat_name=forced_chat_name,
+            force_process=force_process,
+        )
 
-    async def _process_expression(self, update: Update, context: ContextTypes.DEFAULT_TYPE, raw_text: str):
+    async def _process_expression(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        raw_text: str,
+        *,
+        forced_chat_id: str | None = None,
+        forced_chat_name: str | None = None,
+        force_process: bool = False,
+    ):
         message = update.message or update.effective_message
         if not message:
             return
         chat = update.effective_chat
         user = message.from_user
 
-        if chat.type == ChatType.PRIVATE and not re.search(r"\d", raw_text):
+        if (
+            not forced_chat_id
+            and chat.type == ChatType.PRIVATE
+            and not re.search(r"\d", raw_text)
+        ):
             await self._route_to_support(update, context, raw_text)
             return
 
         bot_username = await self._get_bot_username(context)
-        if not self._should_process(chat.type, raw_text, bot_username):
+        if not force_process and not self._should_process(chat.type, raw_text, bot_username):
             return
 
         stripped_text = self._strip_mention(raw_text, bot_username)
         expression_display = stripped_text.strip()
+        target_chat_id = forced_chat_id or str(chat.id)
+        chat_display = forced_chat_name or chat.title or chat.username or str(chat.id)
         try:
             text, currency = self._extract_currency(stripped_text)
         except ValueError as exc:
@@ -650,8 +687,8 @@ class MathBot:
             result_decimal = Decimal(str(result))
 
         row = SheetRow(
-            chat_id=str(chat.id),
-            chat_name=chat.title or chat.username or str(chat.id),
+            chat_id=target_chat_id,
+            chat_name=chat_display,
             user=user.full_name or user.username or str(user.id),
             expression=expression_to_store,
             delta=result_decimal,
