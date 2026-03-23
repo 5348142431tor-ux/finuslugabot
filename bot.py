@@ -774,9 +774,7 @@ class MathBot:
         if not lines:
             await update.message.reply_text(f"{prefix} все валюты = 0")
             return
-        await update.message.reply_text(prefix + "
-" + "
-".join(lines))
+        await update.message.reply_text(prefix + "\n" + "\n".join(lines))
 
     async def send_rates(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
         chat = update.effective_chat
