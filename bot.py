@@ -868,12 +868,30 @@ class MathBot:
 
     async def send_rates(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
         chat = update.effective_chat
-        entries = await self.repo.get_rate_values(str(chat.id))
+        message = update.effective_message
+        target_chat_id = str(chat.id)
+        prefix = "Курсы:"
+        if (
+            self.support_chat_id
+            and chat.id == self.support_chat_id
+            and message
+            and getattr(message, "message_thread_id", None)
+        ):
+            user_id = self._find_user_by_thread(message.message_thread_id)
+            if user_id:
+                target_chat_id = str(user_id)
+                chat_name = await self.repo.get_chat_name(target_chat_id)
+                label = chat_name or user_id
+                prefix = f"Курсы для {label}:"
+        entries = await self.repo.get_rate_values(target_chat_id)
         if not entries:
-            await update.message.reply_text("Для этого чата нет столбцов с курсом (rate).")
+            await message.reply_text("Для этого чата нет столбцов с курсом (rate).")
             return
         lines = [f"- {title}: {value}" for title, value in entries]
-        await update.message.reply_text("Курсы:\n" + "\n".join(lines))
+        await message.reply_text(prefix + "
+" + "
+".join(lines))
+
 
     def run(self):
         app = ApplicationBuilder().token(self.token).build()
