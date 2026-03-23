@@ -847,7 +847,7 @@ class MathBot:
         if not value:
             await update.message.reply_text("Кошелёк не задан на листе 'Настройка'.")
             return
-        await update.message.reply_text(f"Кошелёк: {value}")
+        await update.message.reply_text(value)
         if note:
             await update.message.reply_text(f"Сеть: {note}")
 
