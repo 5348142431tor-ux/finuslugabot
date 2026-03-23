@@ -632,7 +632,8 @@ class MathBot:
         force_process = False
         if (
             self.support_chat_id
-            and message.chat_id == self.support_chat_id
+            and message.chat
+            and message.chat.id == self.support_chat_id
             and message.message_thread_id
         ):
             user_id = self._find_user_by_thread(message.message_thread_id)
@@ -866,7 +867,8 @@ class MathBot:
         app.add_handler(MessageHandler(filters.Regex(r"^/сумма(?:@[\w_]+)?\b"), self.send_total))
         app.add_handler(CommandHandler(["kurs"], self.send_rates))
         app.add_handler(MessageHandler(filters.Regex(r"^/курс(?:@[\w_]+)?\b"), self.send_rates))
-        app.add_handler(CommandHandler(["kosh", "кош"], self.send_wallet))
+        app.add_handler(CommandHandler(["kosh"], self.send_wallet))
+        app.add_handler(MessageHandler(filters.Regex(r"^/кош(?:@[\w_]+)?\b"), self.send_wallet))
         app.add_handler(MessageHandler(filters.COMMAND, self.handle_slash_expression))
         if self.support_chat_id:
             app.add_handler(MessageHandler(filters.Chat(self.support_chat_id) & filters.TEXT, self.handle_support_reply))
