@@ -251,17 +251,14 @@ class SheetRepository:
                 return new_total
 
             new_total = row.delta
-            num_cols = max(len(self.header_titles), self.sheet.col_count)
-            row_payload = ["" for _ in range(num_cols)]
-            row_payload[self.column_map["chat_id"] - 1] = row.chat_id
-            row_payload[self.column_map["chat_name"] - 1] = row.chat_name
-            row_payload[self.column_map["user"] - 1] = row.user
-            row_payload[self.column_map["expression"] - 1] = row.expression
-            row_payload[self.timestamp_column - 1] = row.timestamp
-            row_payload[currency_col - 1] = _format_decimal(new_total)
-            self.sheet.append_row(row_payload, value_input_option="USER_ENTERED")
             col_values = self.sheet.col_values(1)
-            row_idx = len(col_values)
+            row_idx = len(col_values) + 1
+            updates = [
+                {"range": f"A{row_idx}:D{row_idx}", "values": [[row.chat_id, row.chat_name, row.user, row.expression]]},
+                {"range": rowcol_to_a1(row_idx, self.timestamp_column), "values": [[row.timestamp]]},
+                {"range": rowcol_to_a1(row_idx, currency_col), "values": [[_format_decimal(new_total)]]},
+            ]
+            self.sheet.batch_update(updates)
             self.chat_row_cache[row.chat_id] = row_idx
             return new_total
 
