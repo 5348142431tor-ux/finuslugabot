@@ -1318,6 +1318,7 @@ class MathBot:
         app.add_handler(MessageHandler(filters.COMMAND, self.handle_slash_expression))
         if self.support_chat_id:
             app.add_handler(MessageHandler(filters.Chat(self.support_chat_id) & filters.TEXT, self.handle_support_reply, block=False))
+            app.add_handler(MessageHandler(filters.Chat(self.support_chat_id) & filters.TEXT & ~filters.COMMAND, self.handle_expression, block=False))
         app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, self.handle_receipt))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_expression))
         app.run_polling()
