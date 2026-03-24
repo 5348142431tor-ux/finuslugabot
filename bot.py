@@ -447,13 +447,18 @@ class SheetRepository:
                     continue
                 result: list[tuple[int, str, str]] = []
                 for col_idx, title in enumerate(headers[2:], start=3):
-                    title = title.strip()
-                    if not title:
-                        continue
+                    raw_title = title.strip() if title else ""
                     value = row[col_idx - 1].strip() if len(row) >= col_idx else ""
                     if not value:
                         continue
-                    result.append((col_idx, title, value))
+                    if raw_title:
+                        display_title = raw_title
+                    else:
+                        fallback = value.splitlines()[0].strip() if value else ""
+                        if not fallback:
+                            fallback = f"Реквизит {rowcol_to_a1(1, col_idx)[:-1]}"
+                        display_title = fallback
+                    result.append((col_idx, display_title, value))
                 return result
             return []
 
