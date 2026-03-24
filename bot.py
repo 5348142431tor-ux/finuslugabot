@@ -196,6 +196,8 @@ class SheetRepository:
         self.chat_row_cache: dict[str, int] = {}
         self.settings_title = os.environ.get("SETTINGS_WORKSHEET", "Настройка")
         self.settings_sheet = None
+        self.log_title = os.environ.get("LOG_WORKSHEET", "Лог")
+        self.log_sheet = None
         for idx, value in enumerate(self.sheet.col_values(1), start=1):
             if not value or value == "chat_id":
                 continue
@@ -322,6 +324,23 @@ class SheetRepository:
             ws.update("A1:B1", [["key", "value"]])
         self.settings_sheet = ws
         return ws
+
+    def _get_log_sheet(self):
+        if self.log_sheet is not None:
+            return self.log_sheet
+        spreadsheet = self.sheet.spreadsheet
+        try:
+            ws = spreadsheet.worksheet(self.log_title)
+        except gspread.WorksheetNotFound:
+            ws = spreadsheet.add_worksheet(title=self.log_title, rows=200, cols=5)
+            ws.update("A1:D1", [["timestamp", "chat_id", "client_name", "topic", "event"]])
+        self.log_sheet = ws
+        return ws
+
+    async def append_log(self, timestamp: str, chat_id: str, client_name: str, topic: str, event: str) -> None:
+        async with self.lock:
+            sheet = self._get_log_sheet()
+            sheet.append_row([timestamp, chat_id, client_name, topic, event], value_input_option="USER_ENTERED")
 
     async def get_setting(self, key: str) -> tuple[str | None, str | None]:
         async with self.lock:
@@ -539,6 +558,11 @@ class MathBot:
             text=text,
             message_thread_id=thread_id,
         )
+        chat_id = str(user.id)
+        chat_name = await self.repo.get_chat_name(chat_id) or (user.full_name or user.username or chat_id)
+        timestamp = datetime.now(timezone.utc).isoformat()
+        topic_label = chat_name
+        await self.repo.append_log(timestamp, chat_id, chat_name, topic_label, text)
 
     def _find_user_by_thread(self, thread_id: int) -> int | None:
         mapping = self._load_support_topics()
