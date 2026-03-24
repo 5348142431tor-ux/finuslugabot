@@ -649,12 +649,19 @@ class MathBot:
         self._save_support_topics(mapping)
         return topic.message_thread_id
 
-    def _exchange_key(self, chat, message) -> str:
+    def _resolve_thread_id(self, message) -> int | None:
+        if not message:
+            return None
         thread_id = getattr(message, "message_thread_id", None)
-        if thread_id is None:
-            reply = getattr(message, "reply_to_message", None)
-            if reply is not None:
-                thread_id = getattr(reply, "message_thread_id", None)
+        if thread_id is not None:
+            return thread_id
+        reply = getattr(message, "reply_to_message", None)
+        if reply is not None:
+            return getattr(reply, "message_thread_id", None)
+        return None
+
+    def _exchange_key(self, chat, message) -> str:
+        thread_id = self._resolve_thread_id(message)
         return f"{chat.id}:{thread_id or 'root'}"
 
 
@@ -821,29 +828,34 @@ class MathBot:
         if not await self._can_use_exchange(chat, user, context):
             await message.reply_text("Команда доступна только администраторам в операторской группе.")
             return
-        await self._begin_exchange(chat, message, user, context)
+        thread_id = self._resolve_thread_id(message)
+        await self._begin_exchange(chat, message, user, context, thread_id)
 
     async def cancel_exchange(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
         chat = update.effective_chat
-        chat_id = str(chat.id)
-        if chat_id in self.exchange_state:
-            self.exchange_state.pop(state_key, None)
+        thread_id = self._resolve_thread_id(update.effective_message)
+        key = f"{chat.id}:{thread_id or 'root'}"
+        if key in self.exchange_state:
+            self.exchange_state.pop(key, None)
             await update.effective_message.reply_text("Обмен отменён.")
         else:
             await update.effective_message.reply_text("Нет активного обмена.")
 
-    async def _begin_exchange(self, chat, message, user, context):
-        key = self._exchange_key(chat, message)
-        self.exchange_state[key] = {"stage": "give"}
-        LOGGER.info("exchange start key=%s thread=%s user=%s", key, getattr(message, "message_thread_id", None), user.id)
+    async def _begin_exchange(self, chat, message, user, context, thread_id: int | None = None):
+        thread_id = thread_id if thread_id is not None else self._resolve_thread_id(message)
+        key = f"{chat.id}:{thread_id or 'root'}"
+        self.exchange_state[key] = {"stage": "give", "thread_id": thread_id}
+        LOGGER.info("exchange start key=%s thread=%s user=%s", key, thread_id, user.id)
         name = await self._get_client_name(chat, user)
-        await message.reply_text(
-            f"{name}: Шаг 1. Введи сумму и валюту, которую клиент отдаёт (пример: 10000 rub).\n/cancel — отменить."
+        await context.bot.send_message(
+            chat_id=chat.id,
+            text=f"{name}: Шаг 1. Введи сумму и валюту, которую клиент отдаёт (пример: 10000 rub).
+/cancel — отменить.",
+            message_thread_id=thread_id,
         )
 
     async def _process_exchange_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE, raw_text: str, state: dict, state_key: str) -> None:
         chat = update.effective_chat
-        chat_id = str(chat.id)
         message = update.effective_message
         user = update.effective_user
         bot_username = await self._get_bot_username(context)
@@ -878,26 +890,31 @@ class MathBot:
                 return
             result_decimal = Decimal(str(result))
         name = await self._get_client_name(chat, user)
-        if state["stage"] == "give":
+        thread_id = state.get("thread_id")
+        if state.get("stage") == "give":
             amount = abs(result_decimal)
             delta = -amount
             label = f"[Обмен отдаёт] {expression_display}"
-            LOGGER.info("exchange give key=%s amount=%s %s", state_key, amount, currency)
             await self._write_exchange_entry(chat, user, label, delta, currency)
             await self._log_support_event(context, user, f"отдаёт {amount} {currency}")
-            self.exchange_state[state_key] = {"stage": "receive"}
-            await message.reply_text(
-                f"{name}: зафиксировал отдачу {amount} {currency}. Теперь напиши, что клиент получает."
+            self.exchange_state[state_key] = {"stage": "receive", "thread_id": thread_id}
+            await context.bot.send_message(
+                chat_id=chat.id,
+                text=f"{name}: зафиксировал отдачу {amount} {currency}. Теперь напиши, что клиент получает.",
+                message_thread_id=thread_id,
             )
-        elif state["stage"] == "receive":
+        elif state.get("stage") == "receive":
             amount = abs(result_decimal)
             delta = amount
             label = f"[Обмен получает] {expression_display}"
-            LOGGER.info("exchange receive key=%s amount=%s %s", state_key, amount, currency)
             await self._write_exchange_entry(chat, user, label, delta, currency)
             await self._log_support_event(context, user, f"получает {amount} {currency}")
             self.exchange_state.pop(state_key, None)
-            await message.reply_text("Заявка принята.")
+            await context.bot.send_message(
+                chat_id=chat.id,
+                text="Заявка принята.",
+                message_thread_id=thread_id,
+            )
             fake_update = SimpleNamespace(
                 effective_chat=chat,
                 effective_message=message,
@@ -909,17 +926,6 @@ class MathBot:
             await message.reply_text("Неизвестный статус обмена, сбрасываю.")
             self.exchange_state.pop(state_key, None)
 
-    async def _write_exchange_entry(self, chat, user, label: str, delta: Decimal, currency: str):
-        row = SheetRow(
-            chat_id=str(chat.id),
-            chat_name=chat.title or chat.username or str(chat.id),
-            user=user.full_name or user.username or str(user.id),
-            expression=label,
-            delta=delta,
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            currency=currency,
-        )
-        await self.repo.upsert(row)
     async def handle_slash_expression(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = update.message
         if not message:
@@ -1231,7 +1237,8 @@ class MathBot:
             if not await self._can_use_exchange(query.message.chat, query.from_user, context):
                 await query.answer("Недоступно", show_alert=True)
                 return
-            await self._begin_exchange(query.message.chat, query.message, query.from_user, context)
+            thread_id = self._resolve_thread_id(query.message)
+            await self._begin_exchange(query.message.chat, query.message, query.from_user, context, thread_id)
         elif query.data == "menu_requisites":
             fake_update = SimpleNamespace(
                 effective_chat=query.message.chat,
