@@ -97,6 +97,20 @@ def _format_decimal(value: Decimal) -> str:
     return text or "0"
 
 
+def _normalize_chat_id(value: str | None) -> str:
+    if not value:
+        return ""
+    text = value.strip()
+    if not text:
+        return ""
+    if text.lstrip("-").isdigit():
+        return text
+    try:
+        return str(int(Decimal(text)))
+    except (InvalidOperation, ValueError):
+        return text
+
+
 class ExpressionEvaluator:
     def __init__(self, max_length: int = 128, max_depth: int = 10):
         self.max_length = max_length
@@ -217,7 +231,7 @@ class SheetRepository:
             rows = sheet.get_all_values()
         except Exception:
             return
-        existing = {row[0].strip() for row in rows[1:] if row and row[0]}
+        existing = {_normalize_chat_id(row[0]) for row in rows[1:] if row and row[0]}
         additions: list[list[str]] = []
         chat_name_col = self.column_map.get("chat_name")
         for chat_id, row_idx in self.chat_row_cache.items():
@@ -428,7 +442,8 @@ class SheetRepository:
             for row in rows[1:]:
                 if not row or not row[0]:
                     continue
-                if row[0].strip() != chat_id:
+                cell_id = _normalize_chat_id(row[0])
+                if cell_id != chat_id:
                     continue
                 result: list[tuple[int, str, str]] = []
                 for col_idx, title in enumerate(headers[2:], start=3):
