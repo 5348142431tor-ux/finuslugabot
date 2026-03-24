@@ -902,7 +902,10 @@ class MathBot:
         await update.message.reply_text(prefix + "\n" + "\n".join(lines))
 
     async def send_menu(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
-        keyboard = [[InlineKeyboardButton("курс", callback_data="menu_kurs")]]
+        keyboard = [
+            [InlineKeyboardButton("курс", callback_data="menu_kurs")],
+            [InlineKeyboardButton("баланс", callback_data="menu_balance")],
+        ]
         await update.message.reply_text("Меню:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def handle_menu_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -918,6 +921,14 @@ class MathBot:
                 effective_user=query.from_user,
             )
             await self.send_rates(fake_update, context)
+        elif query.data == "menu_balance":
+            fake_update = SimpleNamespace(
+                effective_chat=query.message.chat,
+                effective_message=query.message,
+                message=query.message,
+                effective_user=query.from_user,
+            )
+            await self.send_total(fake_update, context)
 
     async def send_wallet(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         value, note = await self.repo.get_setting("wallet")
