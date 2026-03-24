@@ -841,6 +841,7 @@ class MathBot:
         user = update.effective_user
         bot_username = await self._get_bot_username(context)
         stripped_text = self._strip_mention(raw_text, bot_username)
+        LOGGER.info("exchange input key=%s text=%s", state_key, raw_text)
         expression_display = stripped_text.strip()
         if not expression_display:
             await message.reply_text("Нужен текст с суммой.")
