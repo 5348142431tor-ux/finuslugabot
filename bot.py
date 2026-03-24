@@ -333,7 +333,7 @@ class SheetRepository:
             ws = spreadsheet.worksheet(self.log_title)
         except gspread.WorksheetNotFound:
             ws = spreadsheet.add_worksheet(title=self.log_title, rows=200, cols=5)
-            ws.update("A1:D1", [["timestamp", "chat_id", "client_name", "topic", "event"]])
+            ws.update("A1:E1", [["timestamp", "chat_id", "client_name", "topic", "event"]])
         self.log_sheet = ws
         return ws
 
