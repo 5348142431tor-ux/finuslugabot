@@ -1088,7 +1088,7 @@ class MathBot:
         chat = update.effective_chat
         if chat.type == ChatType.PRIVATE:
             await self._log_support_event(
-                context, update.effective_user, f"запросил кошелёк (сеть: {note or "не указана"})"
+                context, update.effective_user, f"запросил кошелёк (сеть: {note or 'не указана'})"
             )
 
     async def send_rates(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1117,7 +1117,7 @@ class MathBot:
         await message.reply_text(text_block)
         if chat.type == ChatType.PRIVATE:
             await self._log_support_event(
-                context, update.effective_user, f"Клиент запросил /kurs: \n{text_block}"
+                context, update.effective_user, f"запросил /kurs: \n{text_block}"
             )
 
 
