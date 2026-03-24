@@ -198,6 +198,7 @@ class SheetRepository:
         self.settings_sheet = None
         self.log_title = os.environ.get("LOG_WORKSHEET", "Лог")
         self.log_sheet = None
+        self.log_row_cache: dict[str, int] = {}
         for idx, value in enumerate(self.sheet.col_values(1), start=1):
             if not value or value == "chat_id":
                 continue
@@ -333,14 +334,29 @@ class SheetRepository:
             ws = spreadsheet.worksheet(self.log_title)
         except gspread.WorksheetNotFound:
             ws = spreadsheet.add_worksheet(title=self.log_title, rows=200, cols=5)
-            ws.update("A1:E1", [["timestamp", "chat_id", "client_name", "topic", "event"]])
+            ws.update("A1:D1", [["chat_id", "client_name", "topic", "log"]])
         self.log_sheet = ws
+        self.log_row_cache = {}
+        for idx, row in enumerate(ws.get_all_values()[1:], start=2):
+            if not row or not row[0]:
+                continue
+            self.log_row_cache[row[0]] = idx
         return ws
 
     async def append_log(self, timestamp: str, chat_id: str, client_name: str, topic: str, event: str) -> None:
         async with self.lock:
             sheet = self._get_log_sheet()
-            sheet.append_row([timestamp, chat_id, client_name, topic, event], value_input_option="USER_ENTERED")
+            entry = f"{timestamp} — {event}"
+            row_idx = self.log_row_cache.get(chat_id)
+            if row_idx:
+                current = sheet.cell(row_idx, 4).value or ""
+                new_value = entry if not current else entry + "
+" + current
+                sheet.update(rowcol_to_a1(row_idx, 4), [[new_value]])
+            else:
+                row_idx = len(sheet.col_values(1)) + 1
+                sheet.append_row([chat_id, client_name, topic, entry], value_input_option="USER_ENTERED")
+                self.log_row_cache[chat_id] = row_idx
 
     async def get_setting(self, key: str) -> tuple[str | None, str | None]:
         async with self.lock:
