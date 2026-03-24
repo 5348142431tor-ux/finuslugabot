@@ -901,9 +901,7 @@ class MathBot:
             if chat.type == ChatType.PRIVATE:
                 await self._log_support_event(context, update.effective_user, f"Клиент запросил /summa: {prefix} все валюты = 0")
             return
-        text_block = prefix + "
-" + "
-".join(lines)
+        text_block = prefix + "\n" + "\n".join(lines)
         await update.message.reply_text(text_block)
         if chat.type == ChatType.PRIVATE:
             await self._log_support_event(context, update.effective_user, f"Клиент запросил /summa:
