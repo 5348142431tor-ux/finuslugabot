@@ -893,7 +893,7 @@ class MathBot:
                 context, update.effective_user, f"Клиент запросил кошелёк (сеть: {note or "не указана"})"
             )
 
-    async def send_rates(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
+    async def send_rates(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat = update.effective_chat
         message = update.effective_message
         target_chat_id = str(chat.id)
