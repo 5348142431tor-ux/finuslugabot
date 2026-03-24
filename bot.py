@@ -778,7 +778,14 @@ class MathBot:
             await self._write_exchange_entry(chat, user, label, delta, currency)
             await self._log_support_event(context, user, f"получает {amount} {currency}")
             del self.exchange_state[chat_id]
-            await message.reply_text(f"{name}: обмен завершён, получил {amount} {currency}.")
+            await message.reply_text("Заявка принята.")
+            fake_update = SimpleNamespace(
+                effective_chat=chat,
+                effective_message=message,
+                message=message,
+                effective_user=user,
+            )
+            await self.send_total(fake_update, context)
         else:
             await message.reply_text("Неизвестный статус обмена, сбрасываю.")
             del self.exchange_state[chat_id]
