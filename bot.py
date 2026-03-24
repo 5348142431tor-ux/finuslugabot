@@ -207,6 +207,32 @@ class SheetRepository:
                 continue
             self.chat_row_cache[value] = idx
         self._repair_chat_ids()
+        self._ensure_requisites_rows()
+
+    def _ensure_requisites_rows(self) -> None:
+        sheet = self._get_requisites_sheet()
+        if not sheet:
+            return
+        try:
+            rows = sheet.get_all_values()
+        except Exception:
+            return
+        existing = {row[0].strip() for row in rows[1:] if row and row[0]}
+        additions: list[list[str]] = []
+        chat_name_col = self.column_map.get("chat_name")
+        for chat_id, row_idx in self.chat_row_cache.items():
+            if chat_id in existing:
+                continue
+            if chat_name_col:
+                try:
+                    name = self.sheet.cell(row_idx, chat_name_col).value or chat_id
+                except Exception:
+                    name = chat_id
+            else:
+                name = chat_id
+            additions.append([chat_id, name])
+        if additions:
+            sheet.append_rows(additions, value_input_option="USER_ENTERED")
 
     def _repair_chat_ids(self) -> None:
         try:
@@ -327,6 +353,22 @@ class SheetRepository:
             ws = spreadsheet.add_worksheet(title=self.settings_title, rows=50, cols=2)
             ws.update("A1:B1", [["key", "value"]])
         self.settings_sheet = ws
+        return ws
+
+    def _get_requisites_sheet(self):
+        if self.requisites_sheet is not None:
+            return self.requisites_sheet
+        spreadsheet = self.sheet.spreadsheet
+        try:
+            ws = spreadsheet.worksheet(self.requisites_title)
+        except gspread.WorksheetNotFound:
+            ws = spreadsheet.add_worksheet(title=self.requisites_title, rows=200, cols=10)
+            ws.update("A1:B1", [["chat_id", "client_name"]])
+        else:
+            header = ws.row_values(1)
+            if not header or len(header) < 2 or header[0].strip().lower() != "chat_id":
+                ws.update("A1:B1", [["chat_id", "client_name"]])
+        self.requisites_sheet = ws
         return ws
 
     def _get_log_sheet(self):
