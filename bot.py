@@ -908,8 +908,8 @@ class MathBot:
         sanitized = text[1:].strip()
         if not sanitized:
             return
-        key = self._exchange_key(message.chat, message)
-        state = self.exchange_state.get(key)
+        chat_key = str(message.chat.id)
+        state = self.exchange_state.get(chat_key)
         if state:
             await self._process_exchange_message(update, context, sanitized, state)
             return
