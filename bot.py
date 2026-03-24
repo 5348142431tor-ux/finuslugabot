@@ -797,6 +797,8 @@ class MathBot:
         if state:
             await self._process_exchange_message(update, context, raw_text, state, key)
             return
+        elif self.exchange_state:
+            LOGGER.info("exchange key miss key=%s active=%s", key, list(self.exchange_state.keys()))
         if re.search(r"\d", raw_text) and not raw_text.startswith("/"):
             chat = update.effective_chat
             if chat.type == ChatType.PRIVATE:
