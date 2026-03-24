@@ -157,6 +157,7 @@ class SheetRepository:
             spreadsheet_name = os.environ.get("SPREADSHEET_NAME", "TelegramMath")
             spreadsheet = gc.open(spreadsheet_name)
 
+        self.spreadsheet = spreadsheet
         try:
             self.sheet = spreadsheet.worksheet(worksheet)
         except gspread.WorksheetNotFound:
@@ -198,6 +199,8 @@ class SheetRepository:
         self.settings_sheet = None
         self.log_title = os.environ.get("LOG_WORKSHEET", "Лог")
         self.log_sheet = None
+        self.requisites_title = os.environ.get("REQUISITES_WORKSHEET", "Реквизиты")
+        self.requisites_sheet = None
         self.log_row_cache: dict[str, int] = {}
         for idx, value in enumerate(self.sheet.col_values(1), start=1):
             if not value or value == "chat_id":
@@ -370,6 +373,32 @@ class SheetRepository:
                     note = row[2].strip() if len(row) > 2 else ""
                     return (value or None, note or None)
             return (None, None)
+
+    async def list_requisites(self, chat_id: str) -> list[tuple[int, str, str]]:
+        async with self.lock:
+            sheet = self._get_requisites_sheet()
+            if not sheet:
+                return []
+            rows = sheet.get_all_values()
+            if not rows:
+                return []
+            headers = rows[0]
+            for row in rows[1:]:
+                if not row or not row[0]:
+                    continue
+                if row[0].strip() != chat_id:
+                    continue
+                result: list[tuple[int, str, str]] = []
+                for col_idx, title in enumerate(headers[2:], start=3):
+                    title = title.strip()
+                    if not title:
+                        continue
+                    value = row[col_idx - 1].strip() if len(row) >= col_idx else ""
+                    if not value:
+                        continue
+                    result.append((col_idx, title, value))
+                return result
+            return []
 
     async def get_chat_name(self, chat_id: str) -> str | None:
         async with self.lock:
@@ -1049,8 +1078,41 @@ class MathBot:
             [InlineKeyboardButton("курс", callback_data="menu_kurs")],
             [InlineKeyboardButton("баланс", callback_data="menu_balance")],
             [InlineKeyboardButton("обмен", callback_data="menu_exchange")],
+            [InlineKeyboardButton("реквизиты", callback_data="menu_requisites")],
         ]
         await update.message.reply_text("Меню:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def show_requisites(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat = update.effective_chat
+        message = update.effective_message
+        entries = await self.repo.list_requisites(str(chat.id))
+        if not entries:
+            await message.reply_text("Для этого клиента нет сохранённых реквизитов.")
+            return
+        keyboard = [
+            [InlineKeyboardButton(title, callback_data=f"req|{col_idx}")]
+            for col_idx, title, _ in entries
+        ]
+        await message.reply_text("Выбери реквизит:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def _handle_requisite_selection(self, query, context: ContextTypes.DEFAULT_TYPE, payload: str):
+        try:
+            col_idx = int(payload)
+        except ValueError:
+            await query.answer("Некорректный реквизит", show_alert=True)
+            return
+        chat = query.message.chat
+        entries = await self.repo.list_requisites(str(chat.id))
+        match = next((item for item in entries if item[0] == col_idx), None)
+        if not match:
+            await query.answer("Реквизит не найден", show_alert=True)
+            return
+        _, title, value = match
+        await query.message.reply_text(f"{title}:
+{value}")
+        if chat.type == ChatType.PRIVATE:
+            await self._log_support_event(context, query.from_user, f"запросил реквизит {title}")
+        await query.answer()
 
     async def handle_menu_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -1075,6 +1137,16 @@ class MathBot:
             await self.send_total(fake_update, context)
         elif query.data == "menu_exchange":
             await self._begin_exchange(query.message.chat, query.message, query.from_user, context)
+        elif query.data == "menu_requisites":
+            fake_update = SimpleNamespace(
+                effective_chat=query.message.chat,
+                effective_message=query.message,
+                message=query.message,
+                effective_user=query.from_user,
+            )
+            await self.show_requisites(fake_update, context)
+        elif query.data.startswith("req|"):
+            await self._handle_requisite_selection(query, context, query.data.split("|", 1)[1])
         elif query.data == "menu_exchange":
             fake_update = SimpleNamespace(
                 effective_chat=query.message.chat,
@@ -1135,10 +1207,11 @@ class MathBot:
         app.add_handler(MessageHandler(filters.Regex(r"^/сумма(?:@[\w_]+)?\b"), self.send_total))
         app.add_handler(CommandHandler(["kurs"], self.send_rates))
         app.add_handler(CommandHandler(["kosh"], self.send_wallet))
+        app.add_handler(CommandHandler(["req", "requisites"], self.show_requisites))
         app.add_handler(CommandHandler(["exchange"], self.start_exchange))
         app.add_handler(CommandHandler(["cancel"], self.cancel_exchange))
         app.add_handler(CommandHandler(["menu"], self.send_menu))
-        app.add_handler(CallbackQueryHandler(self.handle_menu_callback, pattern=r"^menu_"))
+        app.add_handler(CallbackQueryHandler(self.handle_menu_callback, pattern=r"^(menu_|req\|)"))
         app.add_handler(CommandHandler(["exchange"], self.start_exchange))
         app.add_handler(CommandHandler(["cancel"], self.cancel_exchange))
         app.add_handler(MessageHandler(filters.COMMAND, self.handle_slash_expression))
