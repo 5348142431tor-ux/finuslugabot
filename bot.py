@@ -722,8 +722,7 @@ class MathBot:
         self.exchange_state[chat_id] = {"stage": "give"}
         name = await self._get_client_name(chat, user)
         await message.reply_text(
-            f"{name}: Шаг 1. Введи сумму и валюту, которую клиент отдаёт (пример: 10000 rub).
-/cancel — отменить."
+            f"{name}: Шаг 1. Введи сумму и валюту, которую клиент отдаёт (пример: 10000 rub).\n/cancel — отменить."
         )
 
     async def _process_exchange_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE, raw_text: str, state: dict) -> None:
