@@ -1100,6 +1100,7 @@ class MathBot:
         text_body = message.text or message.caption
         if not text_body:
             return
+        LOGGER.info("support reply chat=%s text=%s", message.chat_id, text_body)
         await context.bot.send_message(chat_id=user_id, text=text_body)
 
     async def send_total(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
