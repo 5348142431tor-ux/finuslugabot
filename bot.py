@@ -528,6 +528,18 @@ class MathBot:
             message_thread_id=thread_id
         )
 
+    async def _log_support_event(self, context: ContextTypes.DEFAULT_TYPE, user, text: str) -> None:
+        if not self.support_chat_id:
+            return
+        thread_id = await self._ensure_support_thread(context, user)
+        if thread_id is None:
+            return
+        await context.bot.send_message(
+            chat_id=self.support_chat_id,
+            text=text,
+            message_thread_id=thread_id,
+        )
+
     def _find_user_by_thread(self, thread_id: int) -> int | None:
         mapping = self._load_support_topics()
         for user_id, t_id in mapping.items():
@@ -738,6 +750,12 @@ class MathBot:
         await message.reply_text(
             f"{expression_to_store} {symbol} {_format_decimal(result_decimal)} (сумма: {_format_decimal(total)})"
         )
+        if forced_chat_id is None and chat.type == ChatType.PRIVATE:
+            await self._log_support_event(
+                context,
+                user,
+                f"Клиент записал: {expression_to_store} {symbol} {_format_decimal(result_decimal)} ({currency or "?"})",
+            )
         await self.send_total(update, context)
 
     async def handle_receipt(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -861,7 +879,7 @@ class MathBot:
             )
             await self.send_rates(fake_update, context)
 
-    async def send_wallet(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
+    async def send_wallet(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         value, note = await self.repo.get_setting("wallet")
         if not value:
             await update.message.reply_text("Кошелёк не задан на листе 'Настройка'.")
@@ -869,6 +887,11 @@ class MathBot:
         await update.message.reply_text(value)
         if note:
             await update.message.reply_text(f"Сеть: {note}")
+        chat = update.effective_chat
+        if chat.type == ChatType.PRIVATE:
+            await self._log_support_event(
+                context, update.effective_user, f"Клиент запросил кошелёк (сеть: {note or "не указана"})"
+            )
 
     async def send_rates(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
         chat = update.effective_chat
@@ -892,7 +915,13 @@ class MathBot:
             await message.reply_text("Для этого чата нет столбцов с курсом (rate).")
             return
         lines = [f"- {title}: {value}" for title, value in entries]
-        await message.reply_text(prefix + "\n" + "\n".join(lines))
+        text_block = prefix + "
+" + "
+".join(lines)
+        await message.reply_text(text_block)
+        if chat.type == ChatType.PRIVATE:
+            await self._log_support_event(context, update.effective_user, f"Клиент запросил /kurs:
+{text_block}")
 
 
     def run(self):
