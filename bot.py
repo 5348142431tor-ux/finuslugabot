@@ -915,9 +915,7 @@ class MathBot:
             await message.reply_text("Для этого чата нет столбцов с курсом (rate).")
             return
         lines = [f"- {title}: {value}" for title, value in entries]
-        text_block = prefix + "
-" + "
-".join(lines)
+        text_block = prefix + "\n" + "\n".join(lines)
         await message.reply_text(text_block)
         if chat.type == ChatType.PRIVATE:
             await self._log_support_event(context, update.effective_user, f"Клиент запросил /kurs:
