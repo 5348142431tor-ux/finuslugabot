@@ -830,7 +830,7 @@ class MathBot:
     async def _begin_exchange(self, chat, message, user, context):
         key = self._exchange_key(chat, message)
         self.exchange_state[key] = {"stage": "give"}
-        LOGGER.info("exchange start key=%s user=%s", key, user.id)
+        LOGGER.info("exchange start key=%s thread=%s user=%s", key, getattr(message, "message_thread_id", None), user.id)
         name = await self._get_client_name(chat, user)
         await message.reply_text(
             f"{name}: Шаг 1. Введи сумму и валюту, которую клиент отдаёт (пример: 10000 rub).\n/cancel — отменить."
