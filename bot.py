@@ -524,6 +524,7 @@ class MathBot:
         self.support_chat_id = int(os.environ.get("SUPPORT_CHAT_ID", "0") or 0)
         self.support_topics_file = Path(os.environ.get("SUPPORT_TOPICS_FILE", "support_topics.json"))
         self.support_topics_file.parent.mkdir(parents=True, exist_ok=True)
+        self.exchange_state: dict[str, dict] = {}
 
     def _load_support_topics(self) -> dict[str, int]:
         if not self.support_topics_file.exists():
@@ -562,6 +563,13 @@ class MathBot:
             message_thread_id=thread_id
         )
 
+    async def _get_client_name(self, chat, user) -> str:
+        chat_id = str(chat.id)
+        stored = await self.repo.get_chat_name(chat_id)
+        if stored:
+            return stored
+        return chat.title or chat.username or user.full_name or user.username or chat_id
+
     async def _log_support_event(self, context: ContextTypes.DEFAULT_TYPE, user, text: str) -> None:
         if not self.support_chat_id:
             return
@@ -577,7 +585,8 @@ class MathBot:
         chat_name = await self.repo.get_chat_name(chat_id) or (user.full_name or user.username or chat_id)
         timestamp = datetime.now(timezone.utc).isoformat()
         topic_label = chat_name
-        await self.repo.append_log(timestamp, chat_id, chat_name, topic_label, text)
+        full_text = f"{chat_name} {text}"
+        await self.repo.append_log(timestamp, chat_id, chat_name, topic_label, full_text)
 
     def _find_user_by_thread(self, thread_id: int) -> int | None:
         mapping = self._load_support_topics()
@@ -601,6 +610,30 @@ class MathBot:
             return False
         mention = f"@{bot_username}".lower()
         return mention in text.lower()
+
+    def _evaluate_expression(self, stripped_text: str) -> tuple[str, Decimal, str, Decimal | None]:
+        expression_display = stripped_text.strip()
+        try:
+            text, currency = self._extract_currency(stripped_text)
+        except ValueError as exc:
+            raise
+        if not text:
+            raise ValueError("EMPTY_EXPRESSION")
+        if currency is None:
+            raise ValueError("NO_CURRENCY")
+        manual_value = None
+        if "=" in text:
+            _, right = text.split("=", 1)
+            manual_value = self._parse_manual_value(right)
+            if manual_value is None:
+                raise ValueError("BAD_MANUAL")
+        if manual_value is not None:
+            result_decimal = manual_value
+        else:
+            result = self.evaluator.evaluate(text)
+            result_decimal = Decimal(str(result))
+        expression_to_store = expression_display or text
+        return expression_to_store, result_decimal, currency, manual_value
 
     def _strip_mention(self, text: str, bot_username: str) -> str:
         if not bot_username:
@@ -654,6 +687,11 @@ class MathBot:
         raw_text = (message.text or "").strip()
         if not raw_text:
             return
+        chat_id = str(update.effective_chat.id)
+        state = self.exchange_state.get(chat_id)
+        if state:
+            await self._process_exchange_message(update, context, raw_text, state)
+            return
         if re.search(r"\d", raw_text) and not raw_text.startswith("/"):
             chat = update.effective_chat
             if chat.type == ChatType.PRIVATE:
@@ -664,6 +702,99 @@ class MathBot:
             return
         await self._process_expression(update, context, raw_text)
 
+    async def start_exchange(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        message = update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+        await self._begin_exchange(chat, message, user, context)
+
+    async def cancel_exchange(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
+        chat = update.effective_chat
+        chat_id = str(chat.id)
+        if chat_id in self.exchange_state:
+            del self.exchange_state[chat_id]
+            await update.effective_message.reply_text("Обмен отменён.")
+        else:
+            await update.effective_message.reply_text("Нет активного обмена.")
+
+    async def _begin_exchange(self, chat, message, user, context):
+        chat_id = str(chat.id)
+        self.exchange_state[chat_id] = {"stage": "give"}
+        name = await self._get_client_name(chat, user)
+        await message.reply_text(
+            f"{name}: Шаг 1. Введи сумму и валюту, которую клиент отдаёт (пример: 10000 rub).
+/cancel — отменить."
+        )
+
+    async def _process_exchange_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE, raw_text: str, state: dict) -> None:
+        chat = update.effective_chat
+        chat_id = str(chat.id)
+        message = update.effective_message
+        user = update.effective_user
+        bot_username = await self._get_bot_username(context)
+        stripped_text = self._strip_mention(raw_text, bot_username)
+        expression_display = stripped_text.strip()
+        if not expression_display:
+            await message.reply_text("Нужен текст с суммой.")
+            return
+        try:
+            text, currency = self._extract_currency(stripped_text)
+        except ValueError as exc:
+            await message.reply_text(str(exc))
+            return
+        if not text:
+            await message.reply_text("Добавь выражение после обращения.")
+            return
+        manual_value = None
+        if "=" in text:
+            _, right = text.split("=", 1)
+            manual_value = self._parse_manual_value(right)
+            if manual_value is None:
+                await message.reply_text("Не могу прочитать число после '=' — напиши его цифрами.")
+                return
+        if manual_value is not None:
+            result_decimal = manual_value
+        else:
+            try:
+                result = self.evaluator.evaluate(text)
+            except Exception as exc:
+                await message.reply_text(f"Ошибка: {exc}")
+                return
+            result_decimal = Decimal(str(result))
+        name = await self._get_client_name(chat, user)
+        if state["stage"] == "give":
+            amount = abs(result_decimal)
+            delta = -amount
+            label = f"[Обмен отдаёт] {expression_display}"
+            await self._write_exchange_entry(chat, user, label, delta, currency)
+            await self._log_support_event(context, user, f"отдаёт {amount} {currency}")
+            self.exchange_state[chat_id] = {"stage": "receive"}
+            await message.reply_text(
+                f"{name}: зафиксировал отдачу {amount} {currency}. Теперь напиши, что клиент получает."
+            )
+        elif state["stage"] == "receive":
+            amount = abs(result_decimal)
+            delta = amount
+            label = f"[Обмен получает] {expression_display}"
+            await self._write_exchange_entry(chat, user, label, delta, currency)
+            await self._log_support_event(context, user, f"получает {amount} {currency}")
+            del self.exchange_state[chat_id]
+            await message.reply_text(f"{name}: обмен завершён, получил {amount} {currency}.")
+        else:
+            await message.reply_text("Неизвестный статус обмена, сбрасываю.")
+            del self.exchange_state[chat_id]
+
+    async def _write_exchange_entry(self, chat, user, label: str, delta: Decimal, currency: str):
+        row = SheetRow(
+            chat_id=str(chat.id),
+            chat_name=chat.title or chat.username or str(chat.id),
+            user=user.full_name or user.username or str(user.id),
+            expression=label,
+            delta=delta,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            currency=currency,
+        )
+        await self.repo.upsert(row)
     async def handle_slash_expression(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = update.message
         if not message:
@@ -794,7 +925,7 @@ class MathBot:
             await self._log_support_event(
                 context,
                 user,
-                f"Клиент записал: {expression_to_store} {symbol} {_format_decimal(result_decimal)} ({currency or "?"})",
+                f"записал: {expression_to_store} {symbol} {_format_decimal(result_decimal)} ({currency or "?"})",
             )
         await self.send_total(update, context)
 
@@ -900,7 +1031,7 @@ class MathBot:
         if not lines:
             await update.message.reply_text(f"{prefix} все валюты = 0")
             if chat.type == ChatType.PRIVATE:
-                await self._log_support_event(context, update.effective_user, f"Клиент запросил /summa: {prefix} все валюты = 0")
+                await self._log_support_event(context, update.effective_user, f"запросил /summa: {prefix} все валюты = 0")
             return
         text_block = prefix + "\n" + "\n".join(lines)
         await update.message.reply_text(text_block)
@@ -911,6 +1042,7 @@ class MathBot:
         keyboard = [
             [InlineKeyboardButton("курс", callback_data="menu_kurs")],
             [InlineKeyboardButton("баланс", callback_data="menu_balance")],
+            [InlineKeyboardButton("обмен", callback_data="menu_exchange")],
         ]
         await update.message.reply_text("Меню:", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -935,6 +1067,34 @@ class MathBot:
                 effective_user=query.from_user,
             )
             await self.send_total(fake_update, context)
+        elif query.data == "menu_exchange":
+            await self._begin_exchange(query.message.chat, query.message, query.from_user, context)
+        elif query.data == "menu_exchange":
+            fake_update = SimpleNamespace(
+                effective_chat=query.message.chat,
+                effective_message=query.message,
+                message=query.message,
+                effective_user=query.from_user,
+            )
+            await self.start_exchange(fake_update, context)
+
+    async def start_exchange(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat = update.effective_chat
+        chat_id = str(chat.id)
+        client_name = await self.repo.get_chat_name(chat_id) or (chat.title or chat.username or chat_id)
+        self.exchange_state[chat_id] = {"stage": "give"}
+        await update.message.reply_text(
+            f"{client_name}: шаг 1. Клиент отдаёт — пришли сумму и валюту (например `10000 rub`).
+/cancel — сбросить."
+        )
+
+    async def cancel_exchange(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
+        chat_id = str(update.effective_chat.id)
+        if chat_id in self.exchange_state:
+            self.exchange_state.pop(chat_id, None)
+            await update.message.reply_text("Обмен отменён.")
+        else:
+            await update.message.reply_text("Нет активного обмена.")
 
     async def send_wallet(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         value, note = await self.repo.get_setting("wallet")
@@ -947,7 +1107,7 @@ class MathBot:
         chat = update.effective_chat
         if chat.type == ChatType.PRIVATE:
             await self._log_support_event(
-                context, update.effective_user, f"Клиент запросил кошелёк (сеть: {note or "не указана"})"
+                context, update.effective_user, f"запросил кошелёк (сеть: {note or "не указана"})"
             )
 
     async def send_rates(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -987,8 +1147,12 @@ class MathBot:
         app.add_handler(MessageHandler(filters.Regex(r"^/сумма(?:@[\w_]+)?\b"), self.send_total))
         app.add_handler(CommandHandler(["kurs"], self.send_rates))
         app.add_handler(CommandHandler(["kosh"], self.send_wallet))
+        app.add_handler(CommandHandler(["exchange"], self.start_exchange))
+        app.add_handler(CommandHandler(["cancel"], self.cancel_exchange))
         app.add_handler(CommandHandler(["menu"], self.send_menu))
         app.add_handler(CallbackQueryHandler(self.handle_menu_callback, pattern=r"^menu_"))
+        app.add_handler(CommandHandler(["exchange"], self.start_exchange))
+        app.add_handler(CommandHandler(["cancel"], self.cancel_exchange))
         app.add_handler(MessageHandler(filters.COMMAND, self.handle_slash_expression))
         if self.support_chat_id:
             app.add_handler(MessageHandler(filters.Chat(self.support_chat_id) & filters.TEXT, self.handle_support_reply))
