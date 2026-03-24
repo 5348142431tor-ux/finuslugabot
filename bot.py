@@ -828,6 +828,7 @@ class MathBot:
     async def _begin_exchange(self, chat, message, user, context):
         key = self._exchange_key(chat, message)
         self.exchange_state[key] = {"stage": "give"}
+        LOGGER.info("exchange start key=%s user=%s", key, user.id)
         name = await self._get_client_name(chat, user)
         await message.reply_text(
             f"{name}: Шаг 1. Введи сумму и валюту, которую клиент отдаёт (пример: 10000 rub).\n/cancel — отменить."
@@ -873,6 +874,7 @@ class MathBot:
             amount = abs(result_decimal)
             delta = -amount
             label = f"[Обмен отдаёт] {expression_display}"
+            LOGGER.info("exchange give key=%s amount=%s %s", state_key, amount, currency)
             await self._write_exchange_entry(chat, user, label, delta, currency)
             await self._log_support_event(context, user, f"отдаёт {amount} {currency}")
             self.exchange_state[state_key] = {"stage": "receive"}
@@ -883,6 +885,7 @@ class MathBot:
             amount = abs(result_decimal)
             delta = amount
             label = f"[Обмен получает] {expression_display}"
+            LOGGER.info("exchange receive key=%s amount=%s %s", state_key, amount, currency)
             await self._write_exchange_entry(chat, user, label, delta, currency)
             await self._log_support_event(context, user, f"получает {amount} {currency}")
             self.exchange_state.pop(state_key, None)
