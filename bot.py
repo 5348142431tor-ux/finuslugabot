@@ -918,8 +918,9 @@ class MathBot:
         text_block = prefix + "\n" + "\n".join(lines)
         await message.reply_text(text_block)
         if chat.type == ChatType.PRIVATE:
-            await self._log_support_event(context, update.effective_user, f"Клиент запросил /kurs:
-{text_block}")
+            await self._log_support_event(
+                context, update.effective_user, f"Клиент запросил /kurs: \n{text_block}"
+            )
 
 
     def run(self):
