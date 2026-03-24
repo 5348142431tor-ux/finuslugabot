@@ -900,6 +900,7 @@ class MathBot:
                 effective_chat=query.message.chat,
                 effective_message=query.message,
                 message=query.message,
+                effective_user=query.from_user,
             )
             await self.send_rates(fake_update, context)
 
