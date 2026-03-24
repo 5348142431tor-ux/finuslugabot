@@ -849,8 +849,7 @@ class MathBot:
         name = await self._get_client_name(chat, user)
         await context.bot.send_message(
             chat_id=chat.id,
-            text=f"{name}: Шаг 1. Введи сумму и валюту, которую клиент отдаёт (пример: 10000 rub).
-/cancel — отменить.",
+            text=f"{name}: Шаг 1. Введи сумму и валюту, которую клиент отдаёт (пример: 10000 rub).\n/cancel — отменить.",
             message_thread_id=thread_id,
         )
 
