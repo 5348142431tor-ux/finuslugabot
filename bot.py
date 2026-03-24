@@ -1108,8 +1108,7 @@ class MathBot:
             await query.answer("Реквизит не найден", show_alert=True)
             return
         _, title, value = match
-        await query.message.reply_text(f"{title}:
-{value}")
+        await query.message.reply_text(f"{title}:\n{value}")
         if chat.type == ChatType.PRIVATE:
             await self._log_support_event(context, query.from_user, f"запросил реквизит {title}")
         await query.answer()
