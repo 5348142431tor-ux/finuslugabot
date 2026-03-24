@@ -904,8 +904,7 @@ class MathBot:
         text_block = prefix + "\n" + "\n".join(lines)
         await update.message.reply_text(text_block)
         if chat.type == ChatType.PRIVATE:
-            await self._log_support_event(context, update.effective_user, f"Клиент запросил /summa:
-{text_block}")
+            await self._log_support_event(context, update.effective_user, f"Клиент запросил /summa: \n{text_block}")
 
     async def send_menu(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
         keyboard = [
