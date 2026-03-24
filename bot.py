@@ -898,8 +898,16 @@ class MathBot:
             lines.append(f"- {code}: {_format_decimal(value)}")
         if not lines:
             await update.message.reply_text(f"{prefix} все валюты = 0")
+            if chat.type == ChatType.PRIVATE:
+                await self._log_support_event(context, update.effective_user, f"Клиент запросил /summa: {prefix} все валюты = 0")
             return
-        await update.message.reply_text(prefix + "\n" + "\n".join(lines))
+        text_block = prefix + "
+" + "
+".join(lines)
+        await update.message.reply_text(text_block)
+        if chat.type == ChatType.PRIVATE:
+            await self._log_support_event(context, update.effective_user, f"Клиент запросил /summa:
+{text_block}")
 
     async def send_menu(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
         keyboard = [
