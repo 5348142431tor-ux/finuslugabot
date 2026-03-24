@@ -1077,24 +1077,6 @@ class MathBot:
             )
             await self.start_exchange(fake_update, context)
 
-    async def start_exchange(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        chat = update.effective_chat
-        chat_id = str(chat.id)
-        client_name = await self.repo.get_chat_name(chat_id) or (chat.title or chat.username or chat_id)
-        self.exchange_state[chat_id] = {"stage": "give"}
-        await update.message.reply_text(
-            f"{client_name}: шаг 1. Клиент отдаёт — пришли сумму и валюту (например `10000 rub`).
-/cancel — сбросить."
-        )
-
-    async def cancel_exchange(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
-        chat_id = str(update.effective_chat.id)
-        if chat_id in self.exchange_state:
-            self.exchange_state.pop(chat_id, None)
-            await update.message.reply_text("Обмен отменён.")
-        else:
-            await update.message.reply_text("Нет активного обмена.")
-
     async def send_wallet(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         value, note = await self.repo.get_setting("wallet")
         if not value:
