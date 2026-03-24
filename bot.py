@@ -628,6 +628,15 @@ class MathBot:
     def _save_support_topics(self, mapping: dict[str, int]) -> None:
         self.support_topics_file.write_text(json.dumps(mapping, ensure_ascii=False, indent=2))
 
+    async def _can_use_exchange(self, chat, user, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        if not chat or chat.type not in {ChatType.GROUP, ChatType.SUPERGROUP}:
+            return False
+        try:
+            member = await context.bot.get_chat_member(chat.id, user.id)
+        except Exception:
+            return False
+        return member.status in {"administrator", "creator"}
+
     async def _ensure_support_thread(self, context: ContextTypes.DEFAULT_TYPE, user) -> int | None:
         if not self.support_chat_id:
             return None
@@ -797,6 +806,9 @@ class MathBot:
         message = update.effective_message
         chat = update.effective_chat
         user = update.effective_user
+        if not await self._can_use_exchange(chat, user, context):
+            await message.reply_text("Команда доступна только администраторам в операторской группе.")
+            return
         await self._begin_exchange(chat, message, user, context)
 
     async def cancel_exchange(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
@@ -1135,13 +1147,16 @@ class MathBot:
         if chat.type == ChatType.PRIVATE:
             await self._log_support_event(context, update.effective_user, f"Клиент запросил /summa: \n{text_block}")
 
-    async def send_menu(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
+    async def send_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton("курс", callback_data="menu_kurs")],
             [InlineKeyboardButton("баланс", callback_data="menu_balance")],
-            [InlineKeyboardButton("обмен", callback_data="menu_exchange")],
             [InlineKeyboardButton("реквизиты", callback_data="menu_requisites")],
         ]
+        chat = update.effective_chat
+        user = update.effective_user
+        if await self._can_use_exchange(chat, user, context):
+            keyboard.insert(2, [InlineKeyboardButton("обмен", callback_data="menu_exchange")])
         await update.message.reply_text("Меню:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def show_requisites(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1197,6 +1212,9 @@ class MathBot:
             )
             await self.send_total(fake_update, context)
         elif query.data == "menu_exchange":
+            if not await self._can_use_exchange(query.message.chat, query.from_user, context):
+                await query.answer("Недоступно", show_alert=True)
+                return
             await self._begin_exchange(query.message.chat, query.message, query.from_user, context)
         elif query.data == "menu_requisites":
             fake_update = SimpleNamespace(
