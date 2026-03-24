@@ -658,7 +658,8 @@ class MathBot:
             chat = update.effective_chat
             if chat.type == ChatType.PRIVATE:
                 await self._route_to_support(update, context, raw_text)
-            return
+                return
+            # в группах продолжаем обработку (при условии упоминания бота)
         if raw_text.startswith("/"):
             return
         await self._process_expression(update, context, raw_text)
