@@ -651,6 +651,10 @@ class MathBot:
 
     def _exchange_key(self, chat, message) -> str:
         thread_id = getattr(message, "message_thread_id", None)
+        if thread_id is None:
+            reply = getattr(message, "reply_to_message", None)
+            if reply is not None:
+                thread_id = getattr(reply, "message_thread_id", None)
         return f"{chat.id}:{thread_id or 'root'}"
 
 
