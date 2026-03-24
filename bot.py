@@ -778,6 +778,7 @@ class MathBot:
         raw_text = (message.text or "").strip()
         if not raw_text:
             return
+        LOGGER.info("expr chat=%s text=%s", update.effective_chat.id, raw_text)
         chat_id = str(update.effective_chat.id)
         state = self.exchange_state.get(chat_id)
         if state:
