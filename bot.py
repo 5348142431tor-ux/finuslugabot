@@ -350,8 +350,7 @@ class SheetRepository:
             row_idx = self.log_row_cache.get(chat_id)
             if row_idx:
                 current = sheet.cell(row_idx, 4).value or ""
-                new_value = entry if not current else entry + "
-" + current
+                new_value = entry if not current else entry + "\n" + current
                 sheet.update(rowcol_to_a1(row_idx, 4), [[new_value]])
             else:
                 row_idx = len(sheet.col_values(1)) + 1
