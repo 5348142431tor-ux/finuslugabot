@@ -215,6 +215,8 @@ class SheetRepository:
         self.log_sheet = None
         self.requisites_title = os.environ.get("REQUISITES_WORKSHEET", "Реквизиты")
         self.requisites_sheet = None
+        self.rates_title = os.environ.get("RATES_WORKSHEET", "курсы")
+        self.rates_sheet = None
         self.log_row_cache: dict[str, int] = {}
         for idx, value in enumerate(self.sheet.col_values(1), start=1):
             if not value or value == "chat_id":
@@ -385,6 +387,21 @@ class SheetRepository:
         self.requisites_sheet = ws
         return ws
 
+    def _get_rates_sheet(self):
+        if self.rates_sheet is not None:
+            return self.rates_sheet
+        spreadsheet = self.sheet.spreadsheet
+        try:
+            ws = spreadsheet.worksheet(self.rates_title)
+        except gspread.WorksheetNotFound:
+            for sheet in spreadsheet.worksheets():
+                if sheet.title.lower() == self.rates_title.lower():
+                    self.rates_sheet = sheet
+                    return sheet
+            return None
+        self.rates_sheet = ws
+        return ws
+
     def _get_log_sheet(self):
         if self.log_sheet is not None:
             return self.log_sheet
@@ -520,6 +537,18 @@ class SheetRepository:
                 if value:
                     result.append((title, str(value)))
             return result
+
+    async def get_grinex_values(self) -> tuple[str | None, str | None]:
+        async with self.lock:
+            sheet = self._get_rates_sheet()
+            if not sheet:
+                return None, None
+            try:
+                buy = sheet.acell("B11").value
+                sell = sheet.acell("B12").value
+            except Exception:
+                return None, None
+            return buy, sell
 
 
 class ReceiptProcessor:
@@ -855,7 +884,7 @@ class MathBot:
         name = await self._get_client_name(chat, user)
         if state["stage"] == "give":
             amount = abs(result_decimal)
-            delta = -amount
+            delta = amount
             label = f"[Обмен отдаёт] {expression_display}"
             await self._write_exchange_entry(chat, user, label, delta, currency)
             await self._log_support_event(context, user, f"отдаёт {amount} {currency}")
@@ -865,7 +894,7 @@ class MathBot:
             )
         elif state["stage"] == "receive":
             amount = abs(result_decimal)
-            delta = amount
+            delta = -amount
             label = f"[Обмен получает] {expression_display}"
             await self._write_exchange_entry(chat, user, label, delta, currency)
             await self._log_support_event(context, user, f"получает {amount} {currency}")
@@ -1132,12 +1161,13 @@ class MathBot:
             if value == Decimal('0'):
                 continue
             lines.append(f"- {code}: {_format_decimal(value)}")
+        note = "\n\nБаланс:\n«-» клиент должен\n«+» фин услуга должна."
         if not lines:
-            await update.message.reply_text(f"{prefix} все валюты = 0")
+            await update.message.reply_text(f"{prefix} все валюты = 0{note}")
             if chat.type == ChatType.PRIVATE:
                 await self._log_support_event(context, update.effective_user, f"запросил /summa: {prefix} все валюты = 0")
             return
-        text_block = prefix + "\n" + "\n".join(lines)
+        text_block = prefix + "\n" + "\n".join(lines) + note
         await update.message.reply_text(text_block)
         if chat.type == ChatType.PRIVATE:
             await self._log_support_event(context, update.effective_user, f"Клиент запросил /summa: \n{text_block}")
@@ -1145,6 +1175,7 @@ class MathBot:
     async def send_menu(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton("курс", callback_data="menu_kurs")],
+            [InlineKeyboardButton("Курс Grinex", callback_data="menu_grinex")],
             [InlineKeyboardButton("баланс", callback_data="menu_balance")],
             [InlineKeyboardButton("обмен", callback_data="menu_exchange")],
             [InlineKeyboardButton("реквизиты", callback_data="menu_requisites")],
@@ -1195,6 +1226,13 @@ class MathBot:
                 effective_user=query.from_user,
             )
             await self.send_rates(fake_update, context)
+        elif query.data == "menu_grinex":
+            buy, sell = await self.repo.get_grinex_values()
+            text = "Курс Grinex:\nкупить USDT — {buy}\nпродать USDT — {sell}".format(
+                buy=buy or "—",
+                sell=sell or "—",
+            )
+            await query.message.reply_text(text)
         elif query.data == "menu_balance":
             fake_update = SimpleNamespace(
                 effective_chat=query.message.chat,

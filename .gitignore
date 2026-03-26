@@ -3,6 +3,9 @@ node_modules
 .DS_Store
 __pycache__
 *.pyc
+.venv/
+bot.log
+logs/
 creds/service-account.json
 support_topics.json
 receipts/*
