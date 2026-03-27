@@ -28,8 +28,19 @@ def load_sheet() -> gspread.Worksheet:
                 return ws
         raise
 
-def build_rows(data: dict[str, Any]) -> list[list[str]]:
-    rows: list[list[str]] = []
+def _normalize_number(value: Any) -> Any:
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        candidate = value.strip().replace(",", ".")
+        try:
+            return float(candidate)
+        except ValueError:
+            return value
+    return value
+
+def build_rows(data: dict[str, Any]) -> list[list[Any]]:
+    rows: list[list[Any]] = []
     for pair, payload in data.items():
         label_base = pair.upper()
         if isinstance(payload, dict):
@@ -38,9 +49,9 @@ def build_rows(data: dict[str, Any]) -> list[list[str]]:
                 if value is None:
                     continue
                 side_label = "продажа" if side == "sell" else "покупка"
-                rows.append([f"{label_base} {side_label}", str(value)])
+                rows.append([f"{label_base} {side_label}", _normalize_number(value)])
         else:
-            rows.append([label_base, str(payload)])
+            rows.append([label_base, _normalize_number(payload)])
     return rows
 
 def main():
@@ -55,7 +66,7 @@ def main():
     rows = build_rows(data)
     start_row = int(os.environ.get("RATES_START_ROW", "5"))
     worksheet.batch_clear([f"A{start_row}:B1000"])
-    worksheet.update(f"A{start_row}", rows)
+    worksheet.update(range_name=f"A{start_row}", values=rows, value_input_option="USER_ENTERED")
     print(f"Записано {len(rows)} строк, начиная с A{start_row}")
 
 if __name__ == "__main__":

@@ -690,6 +690,9 @@ class MathBot:
             return stored
         return chat.title or chat.username or user.full_name or user.username or chat_id
 
+    def _should_log_chat(self, chat_type: str) -> bool:
+        return chat_type in (ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP)
+
     async def _log_support_event(self, context: ContextTypes.DEFAULT_TYPE, user, text: str) -> None:
         if not self.support_chat_id:
             return
@@ -1053,7 +1056,7 @@ class MathBot:
         await message.reply_text(
             f"{expression_to_store} {symbol} {_format_decimal(result_decimal)} (сумма: {_format_decimal(total)})"
         )
-        if forced_chat_id is None and chat.type == ChatType.PRIVATE:
+        if forced_chat_id is None and self._should_log_chat(chat.type):
             await self._log_support_event(
                 context,
                 user,
@@ -1071,6 +1074,20 @@ class MathBot:
             caption = (message.caption or "").lower()
             if not bot_username or f"@{bot_username.lower()}" not in caption:
                 return
+        force_chat_id = None
+        force_chat_name = None
+        if (
+            self.support_chat_id
+            and chat.id == self.support_chat_id
+            and message.message_thread_id
+        ):
+            user_id = self._find_user_by_thread(message.message_thread_id)
+            if not user_id:
+                await message.reply_text("Не нашёл, к какому клиенту относится эта тема.")
+                return
+            force_chat_id = str(user_id)
+            force_chat_name = await self.repo.get_chat_name(force_chat_id) or force_chat_id
+
         file = None
         filename = None
         if message.photo:
@@ -1092,14 +1109,16 @@ class MathBot:
 
         amount = receipt.amount
         currency = receipt.currency
+        target_chat_id = force_chat_id or str(chat.id)
+        target_chat_name = force_chat_name or chat.title or chat.username or str(chat.id)
         if message.from_user:
             user_name = message.from_user.full_name or message.from_user.username or str(message.from_user.id)
         else:
             user_name = str(chat.id)
 
         row = SheetRow(
-            chat_id=str(chat.id),
-            chat_name=chat.title or chat.username or str(chat.id),
+            chat_id=target_chat_id,
+            chat_name=target_chat_name,
             user=user_name,
             expression=f"Чек {currency} -{_format_decimal(amount)} ({filename})",
             delta=-amount,
@@ -1164,12 +1183,12 @@ class MathBot:
         note = "\n\nБаланс:\n«-» клиент должен\n«+» фин услуга должна."
         if not lines:
             await update.message.reply_text(f"{prefix} все валюты = 0{note}")
-            if chat.type == ChatType.PRIVATE:
+            if self._should_log_chat(chat.type):
                 await self._log_support_event(context, update.effective_user, f"запросил /summa: {prefix} все валюты = 0")
             return
         text_block = prefix + "\n" + "\n".join(lines) + note
         await update.message.reply_text(text_block)
-        if chat.type == ChatType.PRIVATE:
+        if self._should_log_chat(chat.type):
             await self._log_support_event(context, update.effective_user, f"Клиент запросил /summa: \n{text_block}")
 
     async def send_menu(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
@@ -1209,7 +1228,7 @@ class MathBot:
             return
         _, title, value = match
         await query.message.reply_text(f"{title}:\n{value}")
-        if chat.type == ChatType.PRIVATE:
+        if self._should_log_chat(chat.type):
             await self._log_support_event(context, query.from_user, f"запросил реквизит {title}")
         await query.answer()
 
@@ -1233,6 +1252,8 @@ class MathBot:
                 sell=sell or "—",
             )
             await query.message.reply_text(text)
+            if self._should_log_chat(query.message.chat.type):
+                await self._log_support_event(context, query.from_user, f"запросил Курс Grinex:\n{text}")
         elif query.data == "menu_balance":
             fake_update = SimpleNamespace(
                 effective_chat=query.message.chat,
@@ -1271,7 +1292,7 @@ class MathBot:
         if note:
             await update.message.reply_text(f"Сеть: {note}")
         chat = update.effective_chat
-        if chat.type == ChatType.PRIVATE:
+        if self._should_log_chat(chat.type):
             await self._log_support_event(
                 context, update.effective_user, f"запросил кошелёк (сеть: {note or 'не указана'})"
             )
@@ -1300,7 +1321,7 @@ class MathBot:
         lines = [f"- {title}: {value}" for title, value in entries]
         text_block = prefix + "\n" + "\n".join(lines)
         await message.reply_text(text_block)
-        if chat.type == ChatType.PRIVATE:
+        if self._should_log_chat(chat.type):
             await self._log_support_event(
                 context, update.effective_user, f"запросил /kurs: \n{text_block}"
             )
