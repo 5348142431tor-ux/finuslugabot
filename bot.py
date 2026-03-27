@@ -30,7 +30,6 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
-    ApplicationHandlerStop,
     filters,
 )
 
@@ -824,6 +823,8 @@ class MathBot:
         message = update.message or update.effective_message
         if not message:
             return
+        if await self._handle_manual_receipt_amount(update, context):
+            return
         raw_text = (message.text or "").strip()
         if not raw_text:
             return
@@ -1237,24 +1238,24 @@ class MathBot:
         else:
             await query.answer("Неизвестное действие", show_alert=True)
 
-    async def handle_manual_receipt_amount(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def _handle_manual_receipt_amount(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         message = update.effective_message
         user = update.effective_user
         if not message or not user:
-            return
+            return False
         token = self.manual_receipt_inputs.get(user.id)
         if not token:
-            return
+            return False
         entry = self.pending_receipts.get(token)
         if not entry:
             self.manual_receipt_inputs.pop(user.id, None)
             await message.reply_text("Эта проверка уже завершена")
             self._clear_manual_receipt_refs(token)
-            raise ApplicationHandlerStop
+            return True
         manual_value = self._parse_manual_value(message.text or "")
         if manual_value is None:
             await message.reply_text("Не могу прочитать сумму. Напиши цифрами, например 12345.67")
-            raise ApplicationHandlerStop
+            return True
         entry.amount = manual_value.copy_abs()
         await message.reply_text(
             f"Принял сумму {_format_decimal(entry.amount)} {entry.currency}. Сохраняю чек…"
@@ -1264,7 +1265,7 @@ class MathBot:
             self.pending_receipts.pop(token, None)
             self.manual_receipt_inputs.pop(user.id, None)
             self._clear_manual_receipt_refs(token)
-        raise ApplicationHandlerStop
+        return True
 
     async def handle_support_reply(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.support_chat_id:
@@ -1475,7 +1476,6 @@ class MathBot:
             app.add_handler(MessageHandler(filters.Chat(self.support_chat_id) & filters.TEXT, self.handle_support_reply, block=False))
             app.add_handler(MessageHandler(filters.Chat(self.support_chat_id) & filters.TEXT & ~filters.COMMAND, self.handle_expression, block=False))
         app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, self.handle_receipt))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_manual_receipt_amount, block=False))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_expression))
         app.run_polling()
 
