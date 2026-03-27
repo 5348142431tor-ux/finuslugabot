@@ -8,6 +8,7 @@ from pathlib import Path
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import ast
 import operator as op
@@ -29,6 +30,7 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    ApplicationHandlerStop,
     filters,
 )
 
@@ -153,6 +155,19 @@ class ReceiptResult:
     amount: Decimal
     currency: str
     text: str
+
+
+@dataclass
+class PendingReceiptEntry:
+    token: str
+    target_chat_id: str
+    target_chat_name: str
+    user_name: str
+    currency: str
+    amount: Decimal
+    filename: str
+    prompt_chat_id: int | None = None
+    prompt_message_id: int | None = None
 
 
 class SheetRepository:
@@ -645,6 +660,8 @@ class MathBot:
         self.support_topics_file = Path(os.environ.get("SUPPORT_TOPICS_FILE", "support_topics.json"))
         self.support_topics_file.parent.mkdir(parents=True, exist_ok=True)
         self.exchange_state: dict[str, dict] = {}
+        self.pending_receipts: dict[str, PendingReceiptEntry] = {}
+        self.manual_receipt_inputs: dict[int, str] = {}
 
     def _load_support_topics(self) -> dict[str, int]:
         if not self.support_topics_file.exists():
@@ -887,7 +904,7 @@ class MathBot:
         name = await self._get_client_name(chat, user)
         if state["stage"] == "give":
             amount = abs(result_decimal)
-            delta = amount
+            delta = -amount
             label = f"[Обмен отдаёт] {expression_display}"
             await self._write_exchange_entry(chat, user, label, delta, currency)
             await self._log_support_event(context, user, f"отдаёт {amount} {currency}")
@@ -897,7 +914,7 @@ class MathBot:
             )
         elif state["stage"] == "receive":
             amount = abs(result_decimal)
-            delta = -amount
+            delta = amount
             label = f"[Обмен получает] {expression_display}"
             await self._write_exchange_entry(chat, user, label, delta, currency)
             await self._log_support_event(context, user, f"получает {amount} {currency}")
@@ -1107,7 +1124,7 @@ class MathBot:
             await message.reply_text(f"Не смог прочитать чек: {exc}")
             return
 
-        amount = receipt.amount
+        amount = receipt.amount.copy_abs()
         currency = receipt.currency
         target_chat_id = force_chat_id or str(chat.id)
         target_chat_name = force_chat_name or chat.title or chat.username or str(chat.id)
@@ -1116,27 +1133,138 @@ class MathBot:
         else:
             user_name = str(chat.id)
 
-        row = SheetRow(
-            chat_id=target_chat_id,
-            chat_name=target_chat_name,
-            user=user_name,
-            expression=f"Чек {currency} -{_format_decimal(amount)} ({filename})",
-            delta=-amount,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+        token = uuid4().hex
+        entry = PendingReceiptEntry(
+            token=token,
+            target_chat_id=target_chat_id,
+            target_chat_name=target_chat_name,
+            user_name=user_name,
             currency=currency,
+            amount=amount,
+            filename=filename,
         )
+        self.pending_receipts[token] = entry
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("Верно", callback_data=f"receipt|{token}|ok"),
+                    InlineKeyboardButton("Исправить", callback_data=f"receipt|{token}|edit"),
+                ]
+            ]
+        )
+        prompt = await message.reply_text(
+            f"Распознано {_format_decimal(amount)} {currency}. Всё верно?",
+            reply_markup=keyboard,
+        )
+        entry.prompt_chat_id = prompt.chat_id
+        entry.prompt_message_id = prompt.message_id
 
+    def _clear_manual_receipt_refs(self, token: str) -> None:
+        if not self.manual_receipt_inputs:
+            return
+        self.manual_receipt_inputs = {
+            user_id: pending_token
+            for user_id, pending_token in self.manual_receipt_inputs.items()
+            if pending_token != token
+        }
+
+    async def _finalize_receipt_entry(self, entry: PendingReceiptEntry, message, user, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        row = SheetRow(
+            chat_id=entry.target_chat_id,
+            chat_name=entry.target_chat_name,
+            user=entry.user_name,
+            expression=f"Чек {entry.currency} -{_format_decimal(entry.amount)} ({entry.filename})",
+            delta=-entry.amount,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            currency=entry.currency,
+        )
         try:
             total = await self.repo.upsert(row)
         except Exception as exc:
             LOGGER.exception("Receipt write error")
             await message.reply_text(f"Не смог обновить таблицу: {exc}")
-            return
+            return False
 
         await message.reply_text(
-            f"Чек обработан: -{_format_decimal(amount)} {currency}. Текущий итог по {currency}: {_format_decimal(total)}"
+            f"Чек сохранён: -{_format_decimal(entry.amount)} {entry.currency}. Текущий итог по {entry.currency}: {_format_decimal(total)}"
         )
-        await self.send_total(update, context)
+        fake_update = SimpleNamespace(
+            effective_chat=message.chat,
+            effective_message=message,
+            message=message,
+            effective_user=user,
+        )
+        await self.send_total(fake_update, context)
+        return True
+
+    async def handle_receipt_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        if not query or not query.data:
+            return
+        parts = query.data.split("|", 2)
+        if len(parts) != 3:
+            await query.answer("Некорректный ответ", show_alert=True)
+            return
+        _, token, action = parts
+        entry = self.pending_receipts.get(token)
+        if not entry:
+            await query.answer("Эта проверка уже завершена", show_alert=True)
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            self._clear_manual_receipt_refs(token)
+            return
+
+        if action == "ok":
+            await query.answer("Сохраняю чек…")
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            success = await self._finalize_receipt_entry(entry, query.message, query.from_user, context)
+            if success:
+                self.pending_receipts.pop(token, None)
+                self._clear_manual_receipt_refs(token)
+        elif action == "edit":
+            await query.answer("Укажи сумму вручную")
+            self.manual_receipt_inputs[query.from_user.id] = token
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            await query.message.reply_text("Напиши сумму чека цифрами (пример: 12345.67)")
+        else:
+            await query.answer("Неизвестное действие", show_alert=True)
+
+    async def handle_manual_receipt_amount(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        message = update.effective_message
+        user = update.effective_user
+        if not message or not user:
+            return
+        token = self.manual_receipt_inputs.get(user.id)
+        if not token:
+            return
+        entry = self.pending_receipts.get(token)
+        if not entry:
+            self.manual_receipt_inputs.pop(user.id, None)
+            await message.reply_text("Эта проверка уже завершена")
+            self._clear_manual_receipt_refs(token)
+            raise ApplicationHandlerStop
+        manual_value = self._parse_manual_value(message.text or "")
+        if manual_value is None:
+            await message.reply_text("Не могу прочитать сумму. Напиши цифрами, например 12345.67")
+            raise ApplicationHandlerStop
+        entry.amount = manual_value.copy_abs()
+        await message.reply_text(
+            f"Принял сумму {_format_decimal(entry.amount)} {entry.currency}. Сохраняю чек…"
+        )
+        success = await self._finalize_receipt_entry(entry, message, user, context)
+        if success:
+            self.pending_receipts.pop(token, None)
+            self.manual_receipt_inputs.pop(user.id, None)
+            self._clear_manual_receipt_refs(token)
+        raise ApplicationHandlerStop
 
     async def handle_support_reply(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.support_chat_id:
@@ -1338,6 +1466,7 @@ class MathBot:
         app.add_handler(CommandHandler(["exchange"], self.start_exchange))
         app.add_handler(CommandHandler(["cancel"], self.cancel_exchange))
         app.add_handler(CommandHandler(["menu"], self.send_menu))
+        app.add_handler(CallbackQueryHandler(self.handle_receipt_callback, pattern=r"^receipt\|"))
         app.add_handler(CallbackQueryHandler(self.handle_menu_callback, pattern=r"^(menu_|req\|)"))
         app.add_handler(CommandHandler(["exchange"], self.start_exchange))
         app.add_handler(CommandHandler(["cancel"], self.cancel_exchange))
@@ -1346,6 +1475,7 @@ class MathBot:
             app.add_handler(MessageHandler(filters.Chat(self.support_chat_id) & filters.TEXT, self.handle_support_reply, block=False))
             app.add_handler(MessageHandler(filters.Chat(self.support_chat_id) & filters.TEXT & ~filters.COMMAND, self.handle_expression, block=False))
         app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, self.handle_receipt))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_manual_receipt_amount, block=False))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_expression))
         app.run_polling()
 
