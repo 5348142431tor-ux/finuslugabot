@@ -1369,6 +1369,7 @@ class MathBot:
             keyboard = [
                 [InlineKeyboardButton("Курс чата", callback_data="menu_kurs_chat")],
                 [InlineKeyboardButton("Курс Grinex", callback_data="menu_grinex")],
+                [InlineKeyboardButton("xe.com", callback_data="menu_kurs_xe")],
             ]
             await query.message.reply_text("Выбери курс:", reply_markup=InlineKeyboardMarkup(keyboard))
         elif query.data == "menu_kurs_chat":
@@ -1388,6 +1389,8 @@ class MathBot:
             await query.message.reply_text(text)
             if self._should_log_chat(query.message.chat.type):
                 await self._log_support_event(context, query.from_user, f"запросил Курс Grinex:\n{text}")
+        elif query.data == "menu_kurs_xe":
+            await query.answer("xe.com пока не подключён", show_alert=True)
         elif query.data == "menu_balance":
             fake_update = SimpleNamespace(
                 effective_chat=query.message.chat,
