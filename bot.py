@@ -564,6 +564,16 @@ class SheetRepository:
                 return None, None
             return buy, sell
 
+    async def get_eurusd_rate(self) -> str | None:
+        async with self.lock:
+            sheet = self._get_rates_sheet()
+            if not sheet:
+                return None
+            try:
+                return sheet.acell("A4").value
+            except Exception:
+                return None
+
 
 class ReceiptProcessor:
     KEYWORDS = ("ИТОГО", "СУММА", "СУММА ПЕРЕВОДА", "СУММА ОПЛАТЫ")
@@ -1390,7 +1400,11 @@ class MathBot:
             if self._should_log_chat(query.message.chat.type):
                 await self._log_support_event(context, query.from_user, f"запросил Курс Grinex:\n{text}")
         elif query.data == "menu_kurs_xe":
-            await query.answer("xe.com пока не подключён", show_alert=True)
+            value = await self.repo.get_eurusd_rate()
+            if not value:
+                await query.answer("Нет данных в курсы!A4", show_alert=True)
+            else:
+                await query.message.reply_text(f"Курс Евро/Доллар: {value}")
         elif query.data == "menu_balance":
             fake_update = SimpleNamespace(
                 effective_chat=query.message.chat,
