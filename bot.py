@@ -1322,8 +1322,7 @@ class MathBot:
 
     async def send_menu(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
         keyboard = [
-            [InlineKeyboardButton("курс", callback_data="menu_kurs")],
-            [InlineKeyboardButton("Курс Grinex", callback_data="menu_grinex")],
+            [InlineKeyboardButton("курсы", callback_data="menu_kurs")],
             [InlineKeyboardButton("баланс", callback_data="menu_balance")],
             [InlineKeyboardButton("обмен", callback_data="menu_exchange")],
             [InlineKeyboardButton("реквизиты", callback_data="menu_requisites")],
@@ -1367,6 +1366,12 @@ class MathBot:
             return
         await query.answer()
         if query.data == "menu_kurs":
+            keyboard = [
+                [InlineKeyboardButton("Курс чата", callback_data="menu_kurs_chat")],
+                [InlineKeyboardButton("Курс Grinex", callback_data="menu_grinex")],
+            ]
+            await query.message.reply_text("Выбери курс:", reply_markup=InlineKeyboardMarkup(keyboard))
+        elif query.data == "menu_kurs_chat":
             fake_update = SimpleNamespace(
                 effective_chat=query.message.chat,
                 effective_message=query.message,
