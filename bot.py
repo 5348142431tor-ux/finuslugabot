@@ -938,6 +938,7 @@ class MathBot:
                 effective_user=user,
             )
             await self.send_total(fake_update, context)
+            should_delete = True
         else:
             await message.reply_text("Неизвестный статус обмена, сбрасываю.")
             del self.exchange_state[chat_id]
@@ -1339,6 +1340,15 @@ class MathBot:
         ]
         await update.message.reply_text("Меню:", reply_markup=InlineKeyboardMarkup(keyboard))
 
+    async def _delete_message_safe(self, message) -> None:
+        if not message:
+            return
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
+
     async def show_requisites(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat = update.effective_chat
         message = update.effective_message
@@ -1375,6 +1385,7 @@ class MathBot:
         if not query:
             return
         await query.answer()
+        should_delete = False
         if query.data == "menu_kurs":
             keyboard = [
                 [InlineKeyboardButton("Курс чата", callback_data="menu_kurs_chat")],
@@ -1382,6 +1393,7 @@ class MathBot:
                 [InlineKeyboardButton("xe.com", callback_data="menu_kurs_xe")],
             ]
             await query.message.reply_text("Выбери курс:", reply_markup=InlineKeyboardMarkup(keyboard))
+            should_delete = True
         elif query.data == "menu_kurs_chat":
             fake_update = SimpleNamespace(
                 effective_chat=query.message.chat,
@@ -1390,6 +1402,7 @@ class MathBot:
                 effective_user=query.from_user,
             )
             await self.send_rates(fake_update, context)
+            should_delete = True
         elif query.data == "menu_grinex":
             buy, sell = await self.repo.get_grinex_values()
             text = "Курс Grinex:\nкупить USDT — {buy}\nпродать USDT — {sell}".format(
@@ -1397,6 +1410,7 @@ class MathBot:
                 sell=sell or "—",
             )
             await query.message.reply_text(text)
+            should_delete = True
             if self._should_log_chat(query.message.chat.type):
                 await self._log_support_event(context, query.from_user, f"запросил Курс Grinex:\n{text}")
         elif query.data == "menu_kurs_xe":
@@ -1405,6 +1419,7 @@ class MathBot:
                 await query.answer("Нет данных в курсы!A4", show_alert=True)
             else:
                 await query.message.reply_text(f"Курс Евро/Доллар: {value}")
+            should_delete = True
         elif query.data == "menu_balance":
             fake_update = SimpleNamespace(
                 effective_chat=query.message.chat,
@@ -1415,6 +1430,7 @@ class MathBot:
             await self.send_total(fake_update, context)
         elif query.data == "menu_exchange":
             await self._begin_exchange(query.message.chat, query.message, query.from_user, context)
+            should_delete = True
         elif query.data == "menu_requisites":
             fake_update = SimpleNamespace(
                 effective_chat=query.message.chat,
@@ -1423,8 +1439,10 @@ class MathBot:
                 effective_user=query.from_user,
             )
             await self.show_requisites(fake_update, context)
+            should_delete = True
         elif query.data.startswith("req|"):
             await self._handle_requisite_selection(query, context, query.data.split("|", 1)[1])
+            should_delete = True
         elif query.data == "menu_exchange":
             fake_update = SimpleNamespace(
                 effective_chat=query.message.chat,
@@ -1433,6 +1451,10 @@ class MathBot:
                 effective_user=query.from_user,
             )
             await self.start_exchange(fake_update, context)
+            should_delete = True
+        if should_delete:
+            await self._delete_message_safe(query.message)
+            should_delete = True
 
     async def send_wallet(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         value, note = await self.repo.get_setting("wallet")
