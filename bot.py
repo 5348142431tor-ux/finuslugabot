@@ -231,6 +231,8 @@ class SheetRepository:
         self.requisites_sheet = None
         self.rates_title = os.environ.get("RATES_WORKSHEET", "курсы")
         self.rates_sheet = None
+        self.ruble_debts_title = os.environ.get("RUBLE_DEBTS_SHEET", "Долги рубль")
+        self.ruble_debts_sheet = None
         self.log_row_cache: dict[str, int] = {}
         for idx, value in enumerate(self.sheet.col_values(1), start=1):
             if not value or value == "chat_id":
@@ -416,6 +418,17 @@ class SheetRepository:
         self.rates_sheet = ws
         return ws
 
+    def _get_ruble_debts_sheet(self):
+        if self.ruble_debts_sheet is not None:
+            return self.ruble_debts_sheet
+        spreadsheet = self.sheet.spreadsheet
+        try:
+            ws = spreadsheet.worksheet(self.ruble_debts_title)
+        except gspread.WorksheetNotFound:
+            return None
+        self.ruble_debts_sheet = ws
+        return ws
+
     def _get_log_sheet(self):
         if self.log_sheet is not None:
             return self.log_sheet
@@ -446,6 +459,25 @@ class SheetRepository:
                 row_idx = len(sheet.col_values(1)) + 1
                 sheet.append_row([chat_id, client_name, topic, entry], value_input_option="USER_ENTERED")
                 self.log_row_cache[chat_id] = row_idx
+
+    async def list_ruble_debts(self, chat_id: str) -> list[tuple[str, str]]:
+        async with self.lock:
+            sheet = self._get_ruble_debts_sheet()
+            if not sheet:
+                return []
+            rows = sheet.get_all_values()
+        result: list[tuple[str, str]] = []
+        normalized = _normalize_chat_id(chat_id)
+        for row in rows[1:]:
+            if not row or not row[0]:
+                continue
+            cell_id = _normalize_chat_id(row[0])
+            if cell_id != normalized:
+                continue
+            remaining = row[2].strip() if len(row) > 2 else ""
+            in_work = row[3].strip() if len(row) > 3 else ""
+            result.append((in_work, remaining))
+        return result
 
     async def get_setting(self, key: str) -> tuple[str | None, str | None]:
         async with self.lock:
@@ -1499,6 +1531,19 @@ class MathBot:
                 context, update.effective_user, f"запросил /kurs: \n{text_block}"
             )
 
+    async def send_ruble_debts(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat = update.effective_chat
+        message = update.effective_message
+        entries = await self.repo.list_ruble_debts(str(chat.id))
+        if not entries:
+            await message.reply_text("Нет активных долгов в листе ‘Долги рубль’.")
+            return
+        for in_work, remaining in entries:
+            line = (
+                f"В работе: {in_work or '—'}\nОсталось обработать: {remaining or '—'}"
+            )
+            await message.reply_text(line)
+
 
     def run(self):
         app = ApplicationBuilder().token(self.token).build()
@@ -1508,8 +1553,7 @@ class MathBot:
         app.add_handler(CommandHandler(["kurs"], self.send_rates))
         app.add_handler(CommandHandler(["kosh"], self.send_wallet))
         app.add_handler(CommandHandler(["req", "requisites"], self.show_requisites))
-        app.add_handler(CommandHandler(["exchange"], self.start_exchange))
-        app.add_handler(CommandHandler(["cancel"], self.cancel_exchange))
+        app.add_handler(CommandHandler(["дай"], self.send_ruble_debts))
         app.add_handler(CommandHandler(["menu"], self.send_menu))
         app.add_handler(CallbackQueryHandler(self.handle_receipt_callback, pattern=r"^receipt\|"))
         app.add_handler(CallbackQueryHandler(self.handle_menu_callback, pattern=r"^(menu_|req\|)"))
