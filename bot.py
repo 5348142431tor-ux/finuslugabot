@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -232,6 +233,7 @@ class SheetRepository:
         self.rates_title = os.environ.get("RATES_WORKSHEET", "курсы")
         self.rates_sheet = None
         self.log_row_cache: dict[str, int] = {}
+        self.command_users_cache: tuple[float, set[int]] | None = None
         for idx, value in enumerate(self.sheet.col_values(1), start=1):
             if not value or value == "chat_id":
                 continue
@@ -447,6 +449,34 @@ class SheetRepository:
                 sheet.append_row([chat_id, client_name, topic, entry], value_input_option="USER_ENTERED")
                 self.log_row_cache[chat_id] = row_idx
 
+    async def get_command_user_ids(self) -> set[int]:
+        now = time.time()
+        if self.command_users_cache and now - self.command_users_cache[0] < 300:
+            return set(self.command_users_cache[1])
+        async with self.lock:
+            sheet = self._get_settings_sheet()
+            rows = sheet.get_all_values()
+        allowed: set[int] = set()
+        for row in rows[1:]:
+            if not row or not row[0]:
+                continue
+            key = row[0].strip().lower()
+            if key not in {"command_user", "command_users", "command_user_id", "allowed_user", "allowed_users", "allowed_user_id"}:
+                continue
+            values: list[str] = []
+            if len(row) > 1 and row[1]:
+                values.append(row[1])
+            if len(row) > 2 and row[2]:
+                values.append(row[2])
+            for raw in values:
+                for token in re.findall(r"\d+", raw):
+                    try:
+                        allowed.add(int(token))
+                    except ValueError:
+                        continue
+        self.command_users_cache = (now, allowed)
+        return set(allowed)
+
     async def get_setting(self, key: str) -> tuple[str | None, str | None]:
         async with self.lock:
             sheet = self._get_settings_sheet()
@@ -459,7 +489,7 @@ class SheetRepository:
                     value = row[1].strip() if len(row) > 1 else ""
                     note = row[2].strip() if len(row) > 2 else ""
                     return (value or None, note or None)
-            return (None, None)
+        return (None, None)
 
     async def list_requisites(self, chat_id: str) -> list[tuple[int, str, str]]:
         async with self.lock:
@@ -759,6 +789,35 @@ class MathBot:
             return False
         mention = f"@{bot_username}".lower()
         return mention in text.lower()
+
+    async def _guard_command_access(self, carrier) -> bool:
+        allowed = await self.repo.get_command_user_ids()
+        if not allowed:
+            return True
+        user = getattr(carrier, "effective_user", None)
+        if user and user.id in allowed:
+            return True
+        message = getattr(carrier, "effective_message", None) or getattr(carrier, "message", None)
+        if message:
+            await message.reply_text("Команда доступна только операторам.")
+        return False
+
+    def _wrap_command(self, handler):
+        async def wrapped(update, context):
+            if not await self._guard_command_access(update):
+                return
+            await handler(update, context)
+        return wrapped
+
+    async def _guard_query_access(self, query) -> bool:
+        allowed = await self.repo.get_command_user_ids()
+        if not allowed:
+            return True
+        user = query.from_user
+        if user and user.id in allowed:
+            return True
+        await query.answer("Команда доступна только операторам.", show_alert=True)
+        return False
 
     def _evaluate_expression(self, stripped_text: str) -> tuple[str, Decimal, str, Decimal | None]:
         expression_display = stripped_text.strip()
@@ -1384,6 +1443,8 @@ class MathBot:
         query = update.callback_query
         if not query:
             return
+        if not await self._guard_query_access(query):
+            return
         await query.answer()
         should_delete = False
         if query.data == "menu_kurs":
@@ -1428,6 +1489,7 @@ class MathBot:
                 effective_user=query.from_user,
             )
             await self.send_total(fake_update, context)
+            should_delete = True
         elif query.data == "menu_exchange":
             await self._begin_exchange(query.message.chat, query.message, query.from_user, context)
             should_delete = True
@@ -1443,18 +1505,8 @@ class MathBot:
         elif query.data.startswith("req|"):
             await self._handle_requisite_selection(query, context, query.data.split("|", 1)[1])
             should_delete = True
-        elif query.data == "menu_exchange":
-            fake_update = SimpleNamespace(
-                effective_chat=query.message.chat,
-                effective_message=query.message,
-                message=query.message,
-                effective_user=query.from_user,
-            )
-            await self.start_exchange(fake_update, context)
-            should_delete = True
         if should_delete:
             await self._delete_message_safe(query.message)
-            should_delete = True
 
     async def send_wallet(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         value, note = await self.repo.get_setting("wallet")
@@ -1503,18 +1555,17 @@ class MathBot:
     def run(self):
         app = ApplicationBuilder().token(self.token).build()
         app.add_handler(CommandHandler("start", self.start))
-        app.add_handler(CommandHandler(["summa", "total"], self.send_total))
-        app.add_handler(MessageHandler(filters.Regex(r"^/сумма(?:@[\w_]+)?\b"), self.send_total))
-        app.add_handler(CommandHandler(["kurs"], self.send_rates))
-        app.add_handler(CommandHandler(["kosh"], self.send_wallet))
-        app.add_handler(CommandHandler(["req", "requisites"], self.show_requisites))
-        app.add_handler(CommandHandler(["exchange"], self.start_exchange))
-        app.add_handler(CommandHandler(["cancel"], self.cancel_exchange))
-        app.add_handler(CommandHandler(["menu"], self.send_menu))
+        guarded_total = self._wrap_command(self.send_total)
+        app.add_handler(CommandHandler(["summa", "total"], guarded_total))
+        app.add_handler(MessageHandler(filters.Regex(r"^/сумма(?:@[\w_]+)?\b"), guarded_total))
+        app.add_handler(CommandHandler(["kurs"], self._wrap_command(self.send_rates)))
+        app.add_handler(CommandHandler(["kosh"], self._wrap_command(self.send_wallet)))
+        app.add_handler(CommandHandler(["req", "requisites"], self._wrap_command(self.show_requisites)))
+        app.add_handler(CommandHandler(["exchange"], self._wrap_command(self.start_exchange)))
+        app.add_handler(CommandHandler(["cancel"], self._wrap_command(self.cancel_exchange)))
+        app.add_handler(CommandHandler(["menu"], self._wrap_command(self.send_menu)))
         app.add_handler(CallbackQueryHandler(self.handle_receipt_callback, pattern=r"^receipt\|"))
         app.add_handler(CallbackQueryHandler(self.handle_menu_callback, pattern=r"^(menu_|req\|)"))
-        app.add_handler(CommandHandler(["exchange"], self.start_exchange))
-        app.add_handler(CommandHandler(["cancel"], self.cancel_exchange))
         app.add_handler(MessageHandler(filters.COMMAND, self.handle_slash_expression))
         if self.support_chat_id:
             app.add_handler(MessageHandler(filters.Chat(self.support_chat_id) & filters.TEXT, self.handle_support_reply, block=False))
