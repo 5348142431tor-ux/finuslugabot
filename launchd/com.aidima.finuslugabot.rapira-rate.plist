@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.aidima.finuslugabot.rapira-rate</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/bash</string>
+      <string>/Users/aidima/finuslugabot_service/run_rapira_rate_updater.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/aidima/finuslugabot_service</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/aidima/finuslugabot_service/launchd-rapira-rate.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/aidima/finuslugabot_service/launchd-rapira-rate.err.log</string>
+  </dict>
+</plist>
