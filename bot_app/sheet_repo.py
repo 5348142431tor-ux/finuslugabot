@@ -728,15 +728,17 @@ class SheetRepository:
     def _insert_row(self, chat_id: str, chat_name: str, user_name: str) -> int:
         next_row = len(self.sheet.col_values(self.chat_id_column)) + 1
         self.sheet.update(
-            range_name=f"A{next_row}:H{next_row}",
+            range_name=f"A{next_row}:I{next_row}",
             values=[[
                 VERIFICATION_STATUS_OPTIONS[0],
                 COMMUNICATION_STYLE_OPTIONS[0],
+                "0",
                 chat_id,
                 chat_name,
                 user_name,
                 "",
                 "0",
+                "",
                 "",
             ]],
         )
