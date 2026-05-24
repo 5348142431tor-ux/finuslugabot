@@ -140,9 +140,9 @@ class SheetRepository:
         self.expression_column = self.column_map.get("expression", 7)
         self.result_column = self.column_map.get("result", 8)
         self.timestamp_column = self.column_map.get("timestamp", 9)
-        self._apply_communication_style_validation()
-        self._ensure_settings_layout()
-        self._ensure_requests_layout()
+        self._safe_sheet_bootstrap(self._apply_communication_style_validation, "apply communication style validation")
+        self._safe_sheet_bootstrap(self._ensure_settings_layout, "ensure settings layout")
+        self._safe_sheet_bootstrap(self._ensure_requests_layout, "ensure requests layout")
         self.currency_columns: dict[str, int] = {}
         for title, idx in self.column_map.items():
             if title.startswith("result_") and title != "result":
@@ -153,9 +153,13 @@ class SheetRepository:
                 self._ensure_currency_column(currency_code)
 
         self.chat_row_cache: dict[str, int] = {}
-        for idx, value in enumerate(self.sheet.col_values(self.chat_id_column), start=1):
-            if value and value != "chat_id":
-                self.chat_row_cache[value] = idx
+        self._refresh_chat_row_cache()
+
+    def _safe_sheet_bootstrap(self, func, label: str) -> None:
+        try:
+            func()
+        except gspread.exceptions.APIError:
+            LOGGER.exception("Skipping sheet bootstrap step: %s", label)
 
     def _rewrite_sheet(self, rows: list[list[str]]) -> list[str]:
         self.sheet.clear()
@@ -723,7 +727,29 @@ class SheetRepository:
         async with self.lock:
             if chat_id in self.chat_row_cache:
                 return
-            self._insert_row(chat_id, chat_name, user_name)
+            self._refresh_chat_row_cache()
+            if chat_id in self.chat_row_cache:
+                return
+            for attempt in range(3):
+                try:
+                    self._insert_row(chat_id, chat_name, user_name)
+                    return
+                except gspread.exceptions.APIError as exc:
+                    status = getattr(getattr(exc, "response", None), "status_code", None)
+                    if status == 429 and attempt < 2:
+                        await asyncio.sleep(2 * (attempt + 1))
+                        self._refresh_chat_row_cache()
+                        if chat_id in self.chat_row_cache:
+                            return
+                        continue
+                    raise
+
+    def _refresh_chat_row_cache(self) -> None:
+        self.chat_row_cache.clear()
+        for idx, value in enumerate(self.sheet.col_values(self.chat_id_column), start=1):
+            normalized = (value or "").strip()
+            if normalized and normalized != "chat_id":
+                self.chat_row_cache[normalized] = idx
 
     def _insert_row(self, chat_id: str, chat_name: str, user_name: str) -> int:
         next_row = len(self.sheet.col_values(self.chat_id_column)) + 1
@@ -738,7 +764,6 @@ class SheetRepository:
                 user_name,
                 "",
                 "0",
-                "",
                 "",
             ]],
         )

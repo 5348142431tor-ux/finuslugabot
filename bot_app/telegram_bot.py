@@ -903,9 +903,7 @@ class FinuslugaBot:
                 LOGGER.exception("Failed to sync dialog examples count for %s", chat_id)
 
     async def _post_init(self, app) -> None:
-        await self._sync_dialog_examples_counts()
-        if self._status_sync_task is None or self._status_sync_task.done():
-            self._status_sync_task = app.create_task(self._requests_status_sync_loop())
+        return
 
     async def _post_shutdown(self, _) -> None:
         if self._status_sync_task is not None:
@@ -1076,6 +1074,8 @@ class FinuslugaBot:
         return bool(re.match(r"^/\s*[=()0-9+\-]", text.strip()))
 
     def _should_process(self, chat_type: str, text: str, bot_username: str) -> bool:
+        if self._is_slash_expression(text):
+            return True
         if chat_type == ChatType.PRIVATE:
             return self._is_slash_expression(text)
         if not bot_username:
@@ -1089,7 +1089,7 @@ class FinuslugaBot:
 
     def _normalize_expression_text(self, chat_type: str, text: str, bot_username: str) -> str:
         stripped = self._strip_mention(text, bot_username)
-        if chat_type == ChatType.PRIVATE and stripped.startswith("/"):
+        if stripped.startswith("/") and self._is_slash_expression(stripped):
             return stripped[1:].strip()
         return stripped
 
@@ -1156,15 +1156,18 @@ class FinuslugaBot:
         user = message.from_user
         if not chat or not user:
             return
-        chat_id = str(chat.id)
+        connection_id = message.business_connection_id or ""
+        connection_meta = self.chat_store.get_business_connection(connection_id) if connection_id else {}
+        owner_user_id = connection_meta.get("user_id")
+        is_operator_message = owner_user_id == user.id or (
+            bool(connection_id) and str(user.id) != str(chat.id)
+        )
+        chat_id = str(chat.id if is_operator_message else user.id)
         chat_name = chat.title or chat.username or user.full_name or chat_id
         user_name = user.full_name or user.username or str(user.id)
         await self.repo.ensure_row(chat_id, chat_name, user_name)
         self.chat_store.ensure_profile(chat_id, chat_name, user_name)
         self.chat_store.ensure_chat_profile(chat_id, chat_name, user_name)
-        connection_id = message.business_connection_id or ""
-        connection_meta = self.chat_store.get_business_connection(connection_id) if connection_id else {}
-        owner_user_id = connection_meta.get("user_id")
         raw_text = (message.text or "").strip()
         if raw_text:
             self.chat_store.log_incoming_text_entry(
@@ -1176,9 +1179,16 @@ class FinuslugaBot:
                 message_id=message.message_id,
                 source="business",
             )
-        is_operator_message = owner_user_id == user.id or (
-            bool(connection_id) and str(user.id) != chat_id
-        )
+        if raw_text and await self._handle_business_command_or_expression(
+            chat_id=chat_id,
+            chat_name=chat_name,
+            user_name=user_name,
+            raw_text=raw_text,
+            context=context,
+            business_chat_id=chat.id,
+            business_connection_id=connection_id,
+        ):
+            return
         if is_operator_message and raw_text:
             last_client_text = self.chat_store.load_chat_profile(chat_id).get("last_client_text", "")
             self.chat_store.append_style_example(
@@ -1234,6 +1244,17 @@ class FinuslugaBot:
         await self.repo.ensure_row(str(chat.id), chat_name, user_name)
         self.chat_store.ensure_profile(str(chat.id), chat_name, user_name)
         await self.show_menu(update, _)
+
+    async def _ensure_chat_registered(self, chat, user) -> tuple[str, str, str] | None:
+        if not chat or not user:
+            return None
+        chat_id = str(chat.id)
+        chat_name = chat.title or chat.username or user.full_name or chat_id
+        user_name = user.full_name or user.username or str(user.id)
+        await self.repo.ensure_row(chat_id, chat_name, user_name)
+        self.chat_store.ensure_profile(chat_id, chat_name, user_name)
+        self.chat_store.ensure_chat_profile(chat_id, chat_name, user_name)
+        return chat_id, chat_name, user_name
 
     async def show_menu(self, update: Update, _: ContextTypes.DEFAULT_TYPE):
         await self._reply(update.effective_message, self._menu_text(), rows=self._menu_rows(), parse_mode="Markdown")
@@ -1350,9 +1371,100 @@ class FinuslugaBot:
             return True
         return False
 
+    async def _handle_business_command_or_expression(
+        self,
+        *,
+        chat_id: str,
+        chat_name: str,
+        user_name: str,
+        raw_text: str,
+        context: ContextTypes.DEFAULT_TYPE,
+        business_chat_id: int,
+        business_connection_id: str,
+    ) -> bool:
+        text = raw_text.strip()
+        lowered = text.casefold()
+        if lowered.startswith("/menu"):
+            sent = await self._send_business_text(
+                context,
+                business_chat_id,
+                business_connection_id,
+                self._menu_text(),
+                reply_markup=self._menu_markup(self._menu_rows()),
+            )
+            self.chat_store.log_outgoing_text(chat_id, chat_name, self._menu_text(), getattr(sent, "message_id", None))
+            return True
+        if lowered.startswith("/summa") or lowered.startswith("/total") or lowered.startswith("/сумма"):
+            totals = await self.repo.get_currency_totals(chat_id)
+            lines = []
+            for code in SUPPORTED_CURRENCY_ORDER:
+                value = totals.get(code, Decimal("0"))
+                if value != Decimal("0"):
+                    lines.append(f"- {code}: {format_decimal(value)}")
+            note = "\n\nБаланс:\n«-» клиент должен\n«+» фин услуга должна."
+            text_reply = f"Остатки: все валюты = 0{note}" if not lines else "Остатки:\n" + "\n".join(lines) + note
+            sent = await self._send_business_text(context, business_chat_id, business_connection_id, text_reply)
+            self.chat_store.log_outgoing_text(chat_id, chat_name, text_reply, getattr(sent, "message_id", None))
+            return True
+        if lowered.startswith("/kurs") or lowered.startswith("/курс"):
+            entries = await self.repo.get_rate_values(chat_id)
+            text_reply = "Для этого чата нет столбцов с курсом (rate)." if not entries else "Курсы:\n" + "\n".join(
+                self._format_rate_line(title, value) for title, value in entries
+            )
+            sent = await self._send_business_text(context, business_chat_id, business_connection_id, text_reply)
+            self.chat_store.log_outgoing_text(chat_id, chat_name, text_reply, getattr(sent, "message_id", None))
+            return True
+        if not self._is_slash_expression(text):
+            return False
+        stripped_text = text[1:].strip()
+        if not stripped_text or not looks_like_expression(stripped_text):
+            return False
+        try:
+            expr_text, currency = self._extract_currency(stripped_text)
+        except ValueError as exc:
+            sent = await self._send_business_text(context, business_chat_id, business_connection_id, str(exc))
+            self.chat_store.log_outgoing_text(chat_id, chat_name, str(exc), getattr(sent, "message_id", None))
+            return True
+        if not expr_text or currency is None:
+            return False
+        manual_value = None
+        if "=" in expr_text:
+            _, right = expr_text.split("=", 1)
+            manual_value = self._parse_manual_value(right)
+            if manual_value is None:
+                text_reply = "Не могу прочитать число после '='."
+                sent = await self._send_business_text(context, business_chat_id, business_connection_id, text_reply)
+                self.chat_store.log_outgoing_text(chat_id, chat_name, text_reply, getattr(sent, "message_id", None))
+                return True
+        try:
+            result_decimal = manual_value if manual_value is not None else Decimal(str(self.evaluator.evaluate(expr_text)))
+        except Exception as exc:
+            text_reply = f"Ошибка: {exc}"
+            sent = await self._send_business_text(context, business_chat_id, business_connection_id, text_reply)
+            self.chat_store.log_outgoing_text(chat_id, chat_name, text_reply, getattr(sent, "message_id", None))
+            return True
+        row = SheetRow(
+            chat_id=chat_id,
+            chat_name=chat_name,
+            user=user_name,
+            expression=stripped_text,
+            delta=result_decimal,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            currency=currency,
+        )
+        total = await self.repo.upsert(row)
+        symbol = "⇒" if manual_value is not None else "="
+        text_reply = f"{stripped_text} {symbol} {format_decimal(result_decimal)} (сумма: {format_decimal(total)})"
+        sent = await self._send_business_text(context, business_chat_id, business_connection_id, text_reply)
+        self.chat_store.log_outgoing_text(chat_id, chat_name, text_reply, getattr(sent, "message_id", None))
+        return True
+
     async def handle_expression(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = update.effective_message
         if not message:
+            return
+        registration = await self._ensure_chat_registered(update.effective_chat, update.effective_user)
+        if registration is None:
             return
         if getattr(message, "business_connection_id", None):
             return
@@ -1380,6 +1492,9 @@ class FinuslugaBot:
         message = update.effective_message
         chat = update.effective_chat
         if not message:
+            return
+        registration = await self._ensure_chat_registered(chat, update.effective_user)
+        if registration is None:
             return
         bot_username = await self._get_bot_username(context)
         if chat.type != ChatType.PRIVATE:
@@ -1443,6 +1558,9 @@ class FinuslugaBot:
         chat = update.effective_chat
         user = update.effective_user
         if not message or not chat or not user:
+            return
+        registration = await self._ensure_chat_registered(chat, user)
+        if registration is None:
             return
         if message.photo or (message.document and message.document.mime_type and message.document.mime_type.startswith("image/")):
             return
@@ -1810,5 +1928,7 @@ class FinuslugaBot:
         app.add_handler(CallbackQueryHandler(self.handle_receipt_callback, pattern=r"^(receipt|menu|exchange)\|"))
         app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, self.handle_receipt))
         app.add_handler(MessageHandler(filters.ATTACHMENT, self.handle_attachment_archive))
+        app.add_handler(MessageHandler(filters.COMMAND, self.handle_expression))
+        app.add_handler(MessageHandler(filters.Regex(r"^/\s*[=()0-9+\-]"), self.handle_expression))
         app.add_handler(MessageHandler(filters.TEXT, self.handle_expression))
         app.run_polling()

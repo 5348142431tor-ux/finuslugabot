@@ -9,9 +9,13 @@ RATE_PLIST="/Users/aidima/Library/LaunchAgents/com.aidima.finuslugabot.rapira-ra
 mkdir -p "$DST"
 mkdir -p "/Users/aidima/finuslugabot_data/chats"
 rsync -a --delete \
+  --exclude '.git' \
   --exclude 'bot.log' \
+  --exclude '*.log' \
   --exclude 'data' \
+  --exclude '.env' \
   --exclude '.venv' \
+  --exclude 'receipts' \
   --exclude '__pycache__' \
   --exclude '*.pyc' \
   "$SRC" "$DST"
